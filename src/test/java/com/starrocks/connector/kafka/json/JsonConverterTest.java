@@ -35,20 +35,5 @@ public class JsonConverterTest {
         System.out.println(jsonNodeDest.toString());
         Assert.assertEquals(jsonStr, jsonNodeDest.toString());
     }
-
-//    @Test
-//    public void convertToJson() throws JsonProcessingException {
-//        JsonConverter jsonConverter = new JsonConverter();
-//        Map<String, Object> props = new HashMap<>();
-//        props.put("schemas.enable", (Object) false);
-//        jsonConverter.configure(props, false);
-//        JsonSerializer jsonSerializer = jsonConverter.getSerializer();
-//        String jsonStr = "{\"elements\":[{\"elName\":\"zll\",\"age\":1},{\"elName\":\"zll1\",\"age\":2}],\"name\":\"haha\",\"id\":1}";
-//        ObjectMapper objectMapper = new ObjectMapper();
-//        JsonNode jsonNodeSource = objectMapper.readTree(jsonStr);
-//        byte[] jsonBytes = jsonSerializer.serialize("", jsonNodeSource);
-//        SchemaAndValue schemaAndValue = jsonConverter.toConnectData("", jsonBytes);
-//        JsonNode jsonNodeDest = jsonConverter.convertToJson(schemaAndValue.schema(), schemaAndValue.value());
-//        Assert.assertEquals(jsonStr, jsonNodeDest.toString());
-//    }
+    
 }
