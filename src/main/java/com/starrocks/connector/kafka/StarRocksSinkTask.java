@@ -120,8 +120,11 @@ public class StarRocksSinkTask extends SinkTask  {
         } else {
             throw new RuntimeException("data format are not support");
         }
+//        Stream SDK必须强制指定table name，这里我们把table name设置为_sr_default_table
+//        _sr_default_table不会被用到
         StreamLoadTableProperties.Builder defaultTablePropertiesBuilder = StreamLoadTableProperties.builder()
                 .database(database)
+                .table("_sr_default_table")
                 .streamLoadDataFormat(dataFormat)
                 .chunkLimit(getChunkLimit());
         String buffMaxbytesStr = props.getOrDefault(StarRocksSinkConnectorConfig.BUFFERFLUSH_MAXBYTES, "67108864");
@@ -265,6 +268,11 @@ public class StarRocksSinkTask extends SinkTask  {
         HashMap<TopicPartition, OffsetAndMetadata> synced = new HashMap<>();
         synchronized (topicPartitionOffset) {
             for (TopicPartition topicPartition : offsets.keySet()) {
+                LOG.debug("topicPartition: " + topicPartition.toString());
+                LOG.debug("offset: " + offsets.get(topicPartition).toString());
+                if (!topicPartitionOffset.containsKey(topicPartition.topic()) || !topicPartitionOffset.get(topicPartition.topic()).containsKey(topicPartition.partition())) {
+                    continue;
+                }
                 synced.put(topicPartition, new OffsetAndMetadata(topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition())));
             }
         }

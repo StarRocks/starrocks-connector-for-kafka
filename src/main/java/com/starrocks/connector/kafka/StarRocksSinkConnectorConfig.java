@@ -73,7 +73,7 @@ public class StarRocksSinkConnectorConfig {
                 ).define(
                         BUFFERFLUSH_MAXBYTES,
                         ConfigDef.Type.LONG,
-                        null,
+                        67108864,
                         ConfigDef.Range.between(67108864, 10737418240L),
                         ConfigDef.Importance.LOW,
                         "the size of a batch of data",
@@ -84,18 +84,7 @@ public class StarRocksSinkConnectorConfig {
                 ).define(
                         CONNECT_TIMEOUTMS,
                         ConfigDef.Type.LONG,
-                        null,
-                        ConfigDef.Range.between(100, 60000),
-                        ConfigDef.Importance.LOW,
-                        "timeout period for connecting to load-url",
-                        CONFIG_GROUP_1,
-                        0,
-                        ConfigDef.Width.NONE,
-                        CONNECT_TIMEOUTMS
-                ).define(
-                        CONNECT_TIMEOUTMS,
-                        ConfigDef.Type.LONG,
-                        null,
+                        100,
                         ConfigDef.Range.between(100, 60000),
                         ConfigDef.Importance.LOW,
                         "timeout period for connecting to load-url",
@@ -128,7 +117,7 @@ public class StarRocksSinkConnectorConfig {
                 ).define(
                         BUFFERFLUSH_INTERVALMS,
                         ConfigDef.Type.LONG,
-                        null,
+                        1000,
                         ConfigDef.Range.between(1000, 3600000),
                         ConfigDef.Importance.LOW,
                         "the interval at which data is sent in bulk to starrocks",

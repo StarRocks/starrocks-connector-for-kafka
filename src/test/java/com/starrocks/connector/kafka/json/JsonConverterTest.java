@@ -35,5 +35,4 @@ public class JsonConverterTest {
         System.out.println(jsonNodeDest.toString());
         Assert.assertEquals(jsonStr, jsonNodeDest.toString());
     }
-    
 }
