@@ -12,4 +12,9 @@ public class KafkaMeta extends Meta {
         this.partition = partition;
         this.offset = offset;
     }
+
+    @Override
+    public String toString() {
+        return "{" + "topic: " + topic + ", partition: " + partition + ", offset: " + offset + "}";
+    }
 }

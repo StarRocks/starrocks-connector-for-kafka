@@ -2,7 +2,6 @@ package com.starrocks.connector.kafka;
 
 import com.starrocks.data.load.stream.CommitListener;
 import com.starrocks.data.load.stream.Meta;
-import org.apache.kafka.connect.sink.SinkRecord;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -19,7 +18,7 @@ public class KafkaListener implements CommitListener {
         synchronized (topicPartitionOffset) {
             while (it.hasNext()) {
                 final KafkaMeta meta = (KafkaMeta) it.next();
-                if (topicPartitionOffset.get(meta.topic).get(meta.partition) < meta.offset) {
+                if (topicPartitionOffset.get(meta.topic).get(meta.partition) == null || topicPartitionOffset.get(meta.topic).get(meta.partition) < meta.offset) {
                     topicPartitionOffset.get(meta.topic).put(meta.partition, meta.offset);
                 }
             }

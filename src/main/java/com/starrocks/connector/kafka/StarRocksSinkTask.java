@@ -66,7 +66,9 @@ public class StarRocksSinkTask extends SinkTask  {
 
     private StreamLoadManagerV2 buildLoadManager(StreamLoadProperties loadProperties, HashMap<String, HashMap<Integer, Long>> topicPartitionOffset) {
         KafkaListener kafkaListener = new KafkaListener(topicPartitionOffset);
-        return new StreamLoadManagerV2(loadProperties, true, kafkaListener);
+        StreamLoadManagerV2 manager = new StreamLoadManagerV2(loadProperties, true, kafkaListener);
+        manager.init();
+        return manager;
     }
 
     //    Data chunk size in a http request for stream load
@@ -159,7 +161,7 @@ public class StarRocksSinkTask extends SinkTask  {
 
     @Override
     public void start(Map<String, String> props) {
-        LOG.info("Starrocks sink task started. version is " + Util.VERSION);
+        LOG.info("Starrocks sink task starting. version is " + Util.VERSION);
         this.props = props;
         parseSinkStreamLoadProperties();
         topicPartitionOffset = new HashMap<>();
@@ -167,6 +169,7 @@ public class StarRocksSinkTask extends SinkTask  {
         loadManager = buildLoadManager(loadProperties, topicPartitionOffset);
         topic2Table = getTopicToTableMap(props);
         jsonConverter = new JsonConverter();
+        LOG.info("Starrocks sink task started. version is " + Util.VERSION);
     }
 
     static Map<String, String> getTopicToTableMap(Map<String, String> config) {
@@ -218,7 +221,7 @@ public class StarRocksSinkTask extends SinkTask  {
 
     @Override
     public void put(Collection<SinkRecord> records) {
-        LOG.debug("Starrocks sink task. version is " + Util.VERSION);
+        LOG.info("Starrocks sink task. version is " + Util.VERSION);
         Iterator<SinkRecord> it = records.iterator();
         boolean occurException = false;
         Exception e = null;
@@ -243,6 +246,8 @@ public class StarRocksSinkTask extends SinkTask  {
                 try {
                     loadManager.write(null, database, getTableFromTopic(topic), row);
                 } catch (Exception sdkException) {
+                    LOG.info(sdkException.getMessage());
+                    sdkException.printStackTrace();
                     occurException = true;
                     e = sdkException;
                     break;
