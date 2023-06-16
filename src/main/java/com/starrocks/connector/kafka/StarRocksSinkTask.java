@@ -110,7 +110,7 @@ public class StarRocksSinkTask extends SinkTask  {
     private StreamLoadProperties buildLoadProperties() {
         String[] loadUrl = props.get(StarRocksSinkConnectorConfig.STARROCKS_LOAD_URL).split(",");
         database = props.get(StarRocksSinkConnectorConfig.STARROCKS_DATABASE_NAME);
-        String format = props.getOrDefault(StarRocksSinkConnectorConfig.SINK_FORMAT, "json");
+        String format = props.getOrDefault(StarRocksSinkConnectorConfig.SINK_FORMAT, "json").toLowerCase();
         StreamLoadDataFormat dataFormat;
         if (format.equals("csv")) {
             dataFormat = new StreamLoadDataFormat.CSVFormat(StarRocksDelimiterParser
@@ -221,7 +221,6 @@ public class StarRocksSinkTask extends SinkTask  {
 
     @Override
     public void put(Collection<SinkRecord> records) {
-        LOG.info("Starrocks sink task. version is " + Util.VERSION);
         Iterator<SinkRecord> it = records.iterator();
         boolean occurException = false;
         Exception e = null;
@@ -273,11 +272,10 @@ public class StarRocksSinkTask extends SinkTask  {
         HashMap<TopicPartition, OffsetAndMetadata> synced = new HashMap<>();
         synchronized (topicPartitionOffset) {
             for (TopicPartition topicPartition : offsets.keySet()) {
-                LOG.debug("topicPartition: " + topicPartition.toString());
-                LOG.debug("offset: " + offsets.get(topicPartition).toString());
                 if (!topicPartitionOffset.containsKey(topicPartition.topic()) || !topicPartitionOffset.get(topicPartition.topic()).containsKey(topicPartition.partition())) {
                     continue;
                 }
+                LOG.info("commit: topic: " + topicPartition.topic() + ", partition: " + topicPartition.partition() + ", offset: " + topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition()));
                 synced.put(topicPartition, new OffsetAndMetadata(topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition())));
             }
         }
