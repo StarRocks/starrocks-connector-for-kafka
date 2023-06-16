@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.starrocks.connector.kafka.json.JsonConverter;
 import com.starrocks.data.load.stream.Record;
 import com.starrocks.data.load.stream.StreamLoadDataFormat;
-import com.starrocks.data.load.stream.properties.StreamLoadProperties;src/main/java/com/starrocks/connector/kafka/StarRocksSinkTask.java
+import com.starrocks.data.load.stream.properties.StreamLoadProperties;
 import com.starrocks.data.load.stream.properties.StreamLoadTableProperties;
 import com.starrocks.data.load.stream.v2.StreamLoadManagerV2;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;

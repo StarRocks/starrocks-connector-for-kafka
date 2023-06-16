@@ -11,8 +11,6 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class JsonConverterTest {
-
-
     private SchemaAndValue getSchemaAndValueFromJsonStr(String jsonStr) throws JsonProcessingException {
         JsonConverter jsonConverter = new JsonConverter();
         Map<String, Object> props = new HashMap<>();
