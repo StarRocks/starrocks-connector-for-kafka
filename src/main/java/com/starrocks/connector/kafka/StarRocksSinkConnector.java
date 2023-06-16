@@ -63,9 +63,7 @@ public class StarRocksSinkConnector extends SinkConnector {
         return configs;
     }
 
-    // 这个函数除了做config的validate以外，不会再做额外的事情
-    // 比如，配置项从String类型转换成具体的实际类型。这些动作
-    // 你还是需要再Task的start方法里做。
+
     /** @return ConfigDef with original configuration properties */
     @Override
     public ConfigDef config() {
@@ -83,7 +81,7 @@ public class StarRocksSinkConnector extends SinkConnector {
         return result;
     }
 
-        /** @return connector version */
+    /** @return connector version */
     @Override
     public String version() {
         return Util.VERSION;

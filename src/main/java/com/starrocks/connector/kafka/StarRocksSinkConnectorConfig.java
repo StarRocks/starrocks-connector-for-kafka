@@ -27,14 +27,6 @@ public class StarRocksSinkConnectorConfig {
             STARROCKS_PASSWORD
     };
 
-//    经过测试，这里定义了connector的配置项的信息。
-//    但是对于用户指定的配置文件来说，一个配置项你可以不指定，但是指定以后会通过ConfigDef定义的每个item做校验
-
-//    根据这个语义，我们需要做的是：
-//    1. 通过ConfigDef来规定每个配置项的范围
-//    2. 额外加一个逻辑来判断配置项是否存在
-//    3. 未定义的默认值应该如何处理
-//    TODO: here. 2023-6-7-21:25
     public static ConfigDef newConfigDef() {
         return new ConfigDef()
                 .define(

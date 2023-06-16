@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.starrocks.connector.kafka.json.JsonConverter;
 import com.starrocks.data.load.stream.Record;
 import com.starrocks.data.load.stream.StreamLoadDataFormat;
-import com.starrocks.data.load.stream.properties.StreamLoadProperties;
+import com.starrocks.data.load.stream.properties.StreamLoadProperties;src/main/java/com/starrocks/connector/kafka/StarRocksSinkTask.java
 import com.starrocks.data.load.stream.properties.StreamLoadTableProperties;
 import com.starrocks.data.load.stream.v2.StreamLoadManagerV2;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
@@ -21,7 +21,7 @@ import java.util.Iterator;
 import java.util.Map;
 
 
-// SinkTask的工作过程，参考 https://docs.confluent.io/platform/7.4/connect/javadocs/javadoc/org/apache/kafka/connect/sink/SinkTask.html
+//  Please reference to: https://docs.confluent.io/platform/7.4/connect/javadocs/javadoc/org/apache/kafka/connect/sink/SinkTask.html
 //  SinkTask is a Task that takes records loaded from Kafka and sends them to another system.
 //  Each task instance is assigned a set of partitions by the Connect framework and will handle
 //  all records received from those partitions.
@@ -71,20 +71,21 @@ public class StarRocksSinkTask extends SinkTask  {
         return manager;
     }
 
-    //    Data chunk size in a http request for stream load
-    //    flink connector并没有将这个配置开放给用户，所以我们这里写使用一个固定值
+    // Data chunk size in a http request for stream load.
+    // Flink connector does not open this configuration to users, so we use a fixed value here.
     private long getChunkLimit() {
         return 3 * GIGA_BYTES_SCALE;
     }
 
-    //    Timeout in millisecond to wait for 100-continue response for http client.
-    //    flink connector并没有将这个配置开放给用户，所以我们这里写使用一个固定值
+    // Timeout in millisecond to wait for 100-continue response for http client.
+    // Flink connector does not open this configuration to users, so we use a fixed value here.
     private int getWaitForContinueTimeout() {
         return 3000;
     }
 
     // Stream load thread count
-    // SDK和SR通信时，使用了一个HTTP线程池，这个配置项用于设置线程池线程的个数
+    // An HTTP thread pool is used for communication between the SDK and SR. 
+    // This configuration item is used to set the number of threads in the thread pool.
     private int getIoThreadCount() {
         return 2;
     }
@@ -122,8 +123,8 @@ public class StarRocksSinkTask extends SinkTask  {
         } else {
             throw new RuntimeException("data format are not support");
         }
-//        Stream SDK必须强制指定table name，这里我们把table name设置为_sr_default_table
-//        _sr_default_table不会被用到
+        // The Stream SDK must force the table name, which we set to _sr_default_table.
+        // _sr_default_table will not be used.
         StreamLoadTableProperties.Builder defaultTablePropertiesBuilder = StreamLoadTableProperties.builder()
                 .database(database)
                 .table("_sr_default_table")
@@ -188,18 +189,9 @@ public class StarRocksSinkTask extends SinkTask  {
         return topic2Table.getOrDefault(topic, topic);
     }
 
-//    现状：
-//    目前的状态是我们的SDK支持CSV和JSON两种格式，所以我们需要把SinkRecord转成
-//    这两种格式。sinkRecord里面的数据是kafka Connect框架自定义的数据类型。
-//    所以我们的问题域是：在kafka connect框架提供的数据格式基础上将其转换成
-//    CSV或者JSON。
-//    那么我可以根据sink.format这个配置项来着手
-//    1. 如果sink.format == csv
-//
-//
     private Record getRecordFromSinkRecord(SinkRecord sinkRecord) {
         if (sinkType == SinkType.CSV) {
-            // 当sink类型为CSV时，要确保SinkRecord的Type是String类型
+            // When the sink Type is CSV, make sure that the SinkRecord type is String
             Schema schema = sinkRecord.valueSchema();
             if (schema == null || schema.type() != Schema.Type.STRING) {
                 throw new RuntimeException("The sink type does not match the data type consumed");
@@ -236,11 +228,12 @@ public class StarRocksSinkTask extends SinkTask  {
                 if (topicPartitionOffset.get(topic).containsKey(partition) && topicPartitionOffset.get(topic).get(partition) <= record.kafkaOffset()) {
                     continue;
                 }
-//              sdk没有提供清理Exception的能力，也就是说按照SDK目前的实现，出现异常后，SDK必须重新初始化, 这里的做法参考了flink:
-//              1. 当出现异常时，put会持续失败，此时我们不做任何事情，让put继续往前推进。
-//              2. 因为框架会周期性地调用preCommit方法，这个方法里我们可以感知到是否发生了异常
-//                 对于出现异常的情况，我们初始化新的SDK，然后向框架抛出异常。这种情况下，框架会
-//                 重新从commit位点拉数据，然后继续往前推进。
+                // The sdk does not provide the ability to clean up exceptions, that is to say, according to the current implementation of the SDK, 
+                // after an Exception occurs, the SDK must be re-initialized, which is based on flink:
+                // 1. When an exception occurs, put will continue to fail, at which point we do nothing and let put move forward.
+                // 2. Because the framework periodically calls the preCommit method, we can sense if an exception has occurred in 
+                //    this method. In the case of an exception, we initialize the new SDK and then throw an exception to the framework. 
+                //    In this case, the framework repulls the data from the commit point and then moves forward.
                 Record row = getRecordFromSinkRecord(record);
                 try {
                     loadManager.write(null, database, getTableFromTopic(topic), row);
@@ -258,15 +251,12 @@ public class StarRocksSinkTask extends SinkTask  {
         }
     }
 
-// 这个函数是kafka connect框架向kafka broker提交offset信息时被调用的。
-// 传入参数表示上次put时fetch数据的位点信息
-// 返回参数是connctor告知框架，我现在提交的位点信息是多少，你可以将kafka broker的位点信息同步到这个地方
     @Override
     public Map<TopicPartition, OffsetAndMetadata> preCommit(Map<TopicPartition, OffsetAndMetadata> offsets) {
         if (loadManager.getException() != null) {
-            //  发生异常，我们重新初始化SDK实例
+            //  When an exception occurs, we re-initialize the SDK instance.
             loadManager = buildLoadManager(loadProperties, topicPartitionOffset);
-            //  每次check SDK是否发生异常，如果发生了异常则抛出，此时框架会重新从commit的offset处回放数据
+            //  Each time the SDK is checked for an exception, if an exception occurs, it is thrown, and the framework replays the data from the offset of the commit.
             throw new RuntimeException(loadManager.getException().getMessage());
         }
         HashMap<TopicPartition, OffsetAndMetadata> synced = new HashMap<>();
