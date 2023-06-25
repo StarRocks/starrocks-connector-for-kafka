@@ -10,7 +10,7 @@ public class StarRocksSinkConnectorConfig {
     public static final String CONFIG_GROUP_1 = "config_group1";
     public static final String STARROCKS_LOAD_URL = "starrocks.load.url";
     public static final String STARROCKS_DATABASE_NAME = "starrocks.database.name";
-    public static final String SINK_FORMAT = "sink.format";
+    public static final String SINK_FORMAT = "sink.properties.format";
     public static final String SINK_PROPERTIES_ROW_DELIMITER = "sink.properties.row_delimiter";
     public static final String BUFFERFLUSH_MAXBYTES = "bufferflush.maxbytes";
     public static final String CONNECT_TIMEOUTMS = "connect.timeoutms";
