@@ -8,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.*;
 
+import static com.starrocks.connector.kafka.StarRocksSinkConnectorConfig.*;
+
 public class StarRocksSinkConnector extends SinkConnector {
     private static final Logger LOG = LoggerFactory.getLogger(StarRocksSinkConnector.class);
     private Map<String, String> config; // connector configuration, provided by
@@ -72,6 +74,15 @@ public class StarRocksSinkConnector extends SinkConnector {
 
     @Override
     public Config validate(Map<String, String> connectorConfigs) {
+        if (!connectorConfigs.containsKey(BUFFERFLUSH_MAXBYTES)) {
+            connectorConfigs.put(BUFFERFLUSH_MAXBYTES, "67108864");
+        }
+        if (!connectorConfigs.containsKey(CONNECT_TIMEOUTMS)) {
+            connectorConfigs.put(CONNECT_TIMEOUTMS, "100");
+        }
+        if (!connectorConfigs.containsKey(BUFFERFLUSH_INTERVALMS)) {
+            connectorConfigs.put(BUFFERFLUSH_INTERVALMS, "1000");
+        }
         Config result = super.validate(connectorConfigs);
         for (String config : StarRocksSinkConnectorConfig.mustRequiredConfigs) {
             if (!connectorConfigs.containsKey(config)) {
