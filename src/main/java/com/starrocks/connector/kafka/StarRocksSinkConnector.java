@@ -26,22 +26,10 @@ public class StarRocksSinkConnector extends SinkConnector {
         LOG.info("StarRocks sink connector started. version is " + Util.VERSION);
     }
 
-    /**
-     * Stop method will be called to stop a connector, cleans up snowflake internal stages, after
-     * making sure that there are no pending files to ingest.
-     */
     @Override
     public void stop() {
         LOG.info("StarRocks sink connector stopped. version is " + Util.VERSION);
     }
-
-    // Default implementation shuts down all external network connections.
-    // We can make it more efficient by identifying configuration changes,
-    // creating new snowflake internal stages, new snowflake tables, new pipes,
-    // for newly added topics;
-    // and cleaning up stages for topics that are not in the new configuration,
-    // and
-    // cleaning up pipes for partitions that are not in the new configuration.
 
     /** @return Sink task class */
     @Override
@@ -53,7 +41,7 @@ public class StarRocksSinkConnector extends SinkConnector {
      * taskConfigs method returns a set of configurations for SinkTasks based on the current
      * configuration, producing at most 'maxTasks' configurations
      *
-     * @param maxTasks maximum number of SinkTasks for this instance of SnowflakeSinkConnector
+     * @param maxTasks maximum number of SinkTasks for this instance of StarRocksSinkConnector
      * @return a list containing 'maxTasks' copies of the configuration
      */
     @Override
