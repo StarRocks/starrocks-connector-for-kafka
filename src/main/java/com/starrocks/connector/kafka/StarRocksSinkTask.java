@@ -63,10 +63,8 @@ public class StarRocksSinkTask extends SinkTask  {
 
     private JsonConverter jsonConverter;
 
-
-    private StreamLoadManagerV2 buildLoadManager(StreamLoadProperties loadProperties, HashMap<String, HashMap<Integer, Long>> topicPartitionOffset) {
-        KafkaListener kafkaListener = new KafkaListener(topicPartitionOffset);
-        StreamLoadManagerV2 manager = new StreamLoadManagerV2(loadProperties, true, kafkaListener);
+    private StreamLoadManagerV2 buildLoadManager(StreamLoadProperties loadProperties) {
+        StreamLoadManagerV2 manager = new StreamLoadManagerV2(loadProperties, true);
         manager.init();
         return manager;
     }
@@ -167,7 +165,7 @@ public class StarRocksSinkTask extends SinkTask  {
         parseSinkStreamLoadProperties();
         topicPartitionOffset = new HashMap<>();
         loadProperties = buildLoadProperties();
-        loadManager = buildLoadManager(loadProperties, topicPartitionOffset);
+        loadManager = buildLoadManager(loadProperties);
         topic2Table = getTopicToTableMap(props);
         jsonConverter = new JsonConverter();
         LOG.info("Starrocks sink task started. version is " + Util.VERSION);
@@ -189,7 +187,7 @@ public class StarRocksSinkTask extends SinkTask  {
         return topic2Table.getOrDefault(topic, topic);
     }
 
-    private Record getRecordFromSinkRecord(SinkRecord sinkRecord) {
+    private String getRecordFromSinkRecord(SinkRecord sinkRecord) {
         if (sinkType == SinkType.CSV) {
             // When the sink Type is CSV, make sure that the SinkRecord type is String
             Schema schema = sinkRecord.valueSchema();
@@ -197,8 +195,7 @@ public class StarRocksSinkTask extends SinkTask  {
                 throw new RuntimeException("The sink type does not match the data type consumed");
             }
             String row = (String) sinkRecord.value();
-            KafkaMeta meta = new KafkaMeta(sinkRecord.topic(), sinkRecord.kafkaPartition(), sinkRecord.kafkaOffset());
-            return new Record(row, meta);
+            return row;
         } else {
             Schema schema = sinkRecord.valueSchema();
             if (schema == null || schema.type() != Schema.Type.STRUCT) {
@@ -206,8 +203,7 @@ public class StarRocksSinkTask extends SinkTask  {
             }
             JsonNode jsonNodeDest = jsonConverter.convertToJson(sinkRecord.valueSchema(), sinkRecord.value());
             String row = jsonNodeDest.toString();
-            KafkaMeta meta = new KafkaMeta(sinkRecord.topic(), sinkRecord.kafkaPartition(), sinkRecord.kafkaOffset());
-            return new Record(row, meta);
+            return row;
         }
     }
 
@@ -216,36 +212,36 @@ public class StarRocksSinkTask extends SinkTask  {
         Iterator<SinkRecord> it = records.iterator();
         boolean occurException = false;
         Exception e = null;
-        synchronized (topicPartitionOffset) {
-            while (it.hasNext()) {
-                final SinkRecord record = it.next();
-                LOG.debug(record.toString());
-                String topic = record.topic();
-                int partition = record.kafkaPartition();
-                if (!topicPartitionOffset.containsKey(topic)) {
-                    topicPartitionOffset.put(topic, new HashMap<>());
-                }
-                if (topicPartitionOffset.get(topic).containsKey(partition) && topicPartitionOffset.get(topic).get(partition) <= record.kafkaOffset()) {
-                    continue;
-                }
-                // The sdk does not provide the ability to clean up exceptions, that is to say, according to the current implementation of the SDK, 
-                // after an Exception occurs, the SDK must be re-initialized, which is based on flink:
-                // 1. When an exception occurs, put will continue to fail, at which point we do nothing and let put move forward.
-                // 2. Because the framework periodically calls the preCommit method, we can sense if an exception has occurred in 
-                //    this method. In the case of an exception, we initialize the new SDK and then throw an exception to the framework. 
-                //    In this case, the framework repulls the data from the commit point and then moves forward.
-                Record row = getRecordFromSinkRecord(record);
-                try {
-                    loadManager.write(null, database, getTableFromTopic(topic), row);
-                } catch (Exception sdkException) {
-                    LOG.info(sdkException.getMessage());
-                    sdkException.printStackTrace();
-                    occurException = true;
-                    e = sdkException;
-                    break;
-                }
+        while (it.hasNext()) {
+            final SinkRecord record = it.next();
+            LOG.debug(record.toString());
+            String topic = record.topic();
+            int partition = record.kafkaPartition();
+            if (!topicPartitionOffset.containsKey(topic)) {
+                topicPartitionOffset.put(topic, new HashMap<>());
+            }
+            if (topicPartitionOffset.get(topic).containsKey(partition) && topicPartitionOffset.get(topic).get(partition) >= record.kafkaOffset()) {
+                continue;
+            }
+            topicPartitionOffset.get(topic).put(partition, record.kafkaOffset());
+            // The sdk does not provide the ability to clean up exceptions, that is to say, according to the current implementation of the SDK,
+            // after an Exception occurs, the SDK must be re-initialized, which is based on flink:
+            // 1. When an exception occurs, put will continue to fail, at which point we do nothing and let put move forward.
+            // 2. Because the framework periodically calls the preCommit method, we can sense if an exception has occurred in
+            //    this method. In the case of an exception, we initialize the new SDK and then throw an exception to the framework.
+            //    In this case, the framework repulls the data from the commit point and then moves forward.
+            String row = getRecordFromSinkRecord(record);
+            try {
+                loadManager.write(null, database, getTableFromTopic(topic), row);
+            } catch (Exception sdkException) {
+                LOG.info(sdkException.getMessage());
+                sdkException.printStackTrace();
+                occurException = true;
+                e = sdkException;
+                break;
             }
         }
+
         if (occurException && e != null) {
             LOG.info("put occurs exception, Err: " + e.getMessage());
         }
@@ -253,21 +249,20 @@ public class StarRocksSinkTask extends SinkTask  {
 
     @Override
     public Map<TopicPartition, OffsetAndMetadata> preCommit(Map<TopicPartition, OffsetAndMetadata> offsets) {
+        loadManager.flush();
         if (loadManager.getException() != null) {
             //  When an exception occurs, we re-initialize the SDK instance.
-            loadManager = buildLoadManager(loadProperties, topicPartitionOffset);
+            loadManager = buildLoadManager(loadProperties);
             //  Each time the SDK is checked for an exception, if an exception occurs, it is thrown, and the framework replays the data from the offset of the commit.
             throw new RuntimeException(loadManager.getException().getMessage());
         }
         HashMap<TopicPartition, OffsetAndMetadata> synced = new HashMap<>();
-        synchronized (topicPartitionOffset) {
-            for (TopicPartition topicPartition : offsets.keySet()) {
-                if (!topicPartitionOffset.containsKey(topicPartition.topic()) || !topicPartitionOffset.get(topicPartition.topic()).containsKey(topicPartition.partition())) {
-                    continue;
-                }
-                LOG.info("commit: topic: " + topicPartition.topic() + ", partition: " + topicPartition.partition() + ", offset: " + topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition()));
-                synced.put(topicPartition, new OffsetAndMetadata(topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition())));
+        for (TopicPartition topicPartition : offsets.keySet()) {
+            if (!topicPartitionOffset.containsKey(topicPartition.topic()) || !topicPartitionOffset.get(topicPartition.topic()).containsKey(topicPartition.partition())) {
+                continue;
             }
+            LOG.info("commit: topic: " + topicPartition.topic() + ", partition: " + topicPartition.partition() + ", offset: " + topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition()));
+            synced.put(topicPartition, new OffsetAndMetadata(topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition())));
         }
         return synced;
     }
