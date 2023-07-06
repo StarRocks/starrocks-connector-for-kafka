@@ -234,7 +234,8 @@ public class StarRocksSinkTask extends SinkTask  {
             try {
                 loadManager.write(null, database, getTableFromTopic(topic), row);
             } catch (Exception sdkException) {
-                LOG.info(sdkException.getMessage());
+                LOG.error("put error: " + sdkException.getMessage() +
+                          " topic, partition, offset is " + topic + ", " + record.kafkaPartition() + ", " + record.kafkaOffset());
                 sdkException.printStackTrace();
                 occurException = true;
                 e = sdkException;
