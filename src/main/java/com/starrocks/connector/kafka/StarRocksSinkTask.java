@@ -2,7 +2,6 @@ package com.starrocks.connector.kafka;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.starrocks.connector.kafka.json.JsonConverter;
-import com.starrocks.data.load.stream.Record;
 import com.starrocks.data.load.stream.StreamLoadDataFormat;
 import com.starrocks.data.load.stream.properties.StreamLoadProperties;
 import com.starrocks.data.load.stream.properties.StreamLoadTableProperties;
@@ -48,20 +47,18 @@ public class StarRocksSinkTask extends SinkTask  {
     // topicname -> partiton -> offset
     private HashMap<String, HashMap<Integer, Long>> topicPartitionOffset;
     private StreamLoadManagerV2 loadManager;
-
     private Map<String, String> props;
-
     private StreamLoadProperties loadProperties;
-
     private String database;
     private Map<String, String> topic2Table;
-
     private static final long KILO_BYTES_SCALE = 1024L;
     private static final long MEGA_BYTES_SCALE = KILO_BYTES_SCALE * KILO_BYTES_SCALE;
     private static final long GIGA_BYTES_SCALE = MEGA_BYTES_SCALE * KILO_BYTES_SCALE;
     private final Map<String, String> streamLoadProps = new HashMap<>();
-
     private JsonConverter jsonConverter;
+    private long maxRetryTimes;
+    private long retryCount = 0;
+    private HashMap<TopicPartition, OffsetAndMetadata> synced = new HashMap<>();
 
     private StreamLoadManagerV2 buildLoadManager(StreamLoadProperties loadProperties) {
         StreamLoadManagerV2 manager = new StreamLoadManagerV2(loadProperties, true);
@@ -168,6 +165,7 @@ public class StarRocksSinkTask extends SinkTask  {
         loadManager = buildLoadManager(loadProperties);
         topic2Table = getTopicToTableMap(props);
         jsonConverter = new JsonConverter();
+        maxRetryTimes = Long.parseLong(props.getOrDefault(StarRocksSinkConnectorConfig.SINK_MAXRETRIES, "3"));
         LOG.info("Starrocks sink task started. version is " + Util.VERSION);
     }
 
@@ -209,6 +207,13 @@ public class StarRocksSinkTask extends SinkTask  {
 
     @Override
     public void put(Collection<SinkRecord> records) {
+        if (maxRetryTimes != -1) {
+            if (retryCount > maxRetryTimes) {
+                LOG.error("Stream load failure " + retryCount + " times, which bigger than maxRetryTimes " + maxRetryTimes);
+                LOG.error("Error message is " + loadManager.getException().getMessage() + ", sink task will be stopped");
+                throw new RuntimeException(loadManager.getException());
+            }
+        }
         Iterator<SinkRecord> it = records.iterator();
         boolean occurException = false;
         Exception e = null;
@@ -220,7 +225,9 @@ public class StarRocksSinkTask extends SinkTask  {
             if (!topicPartitionOffset.containsKey(topic)) {
                 topicPartitionOffset.put(topic, new HashMap<>());
             }
-            if (topicPartitionOffset.get(topic).containsKey(partition) && topicPartitionOffset.get(topic).get(partition) >= record.kafkaOffset()) {
+            TopicPartition tp = new TopicPartition(topic, partition);
+            OffsetAndMetadata om = synced.get(tp);
+            if (om != null && om.offset() >= record.kafkaOffset()) {
                 continue;
             }
             topicPartitionOffset.get(topic).put(partition, record.kafkaOffset());
@@ -250,14 +257,27 @@ public class StarRocksSinkTask extends SinkTask  {
 
     @Override
     public Map<TopicPartition, OffsetAndMetadata> preCommit(Map<TopicPartition, OffsetAndMetadata> offsets) {
-        loadManager.flush();
-        if (loadManager.getException() != null) {
+        Throwable flushException = null;
+        try {
+            loadManager.flush();
+        } catch (Exception e) {
+            flushException = e;
+        }
+        if (flushException == null) {
+            flushException = loadManager.getException();
+        }
+        if (flushException != null) {
+            LOG.warn("Stream load failure, " + flushException.getMessage() + ", will retry");
+            LOG.warn("Current retry times is " + retryCount);
+            retryCount++;
             //  When an exception occurs, we re-initialize the SDK instance.
             loadManager = buildLoadManager(loadProperties);
             //  Each time the SDK is checked for an exception, if an exception occurs, it is thrown, and the framework replays the data from the offset of the commit.
-            throw new RuntimeException(loadManager.getException().getMessage());
+            throw new RuntimeException(flushException.getMessage());
+        } else {
+            retryCount = 0;
         }
-        HashMap<TopicPartition, OffsetAndMetadata> synced = new HashMap<>();
+        loadManager.flush();
         for (TopicPartition topicPartition : offsets.keySet()) {
             if (!topicPartitionOffset.containsKey(topicPartition.topic()) || !topicPartitionOffset.get(topicPartition.topic()).containsKey(topicPartition.partition())) {
                 continue;

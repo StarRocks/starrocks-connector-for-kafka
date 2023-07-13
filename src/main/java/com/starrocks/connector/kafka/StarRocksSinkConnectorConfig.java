@@ -37,6 +37,10 @@ public class StarRocksSinkConnectorConfig {
     // this configuration item provides a mapping in the following format:
     // <topic-1>:<table-1>,<topic-2>:<table-2>,...
     public static final String STARROCKS_TOPIC2TABLE_MAP = "starrocks.topic2table.map";
+    // Data writing to StarRocks may fail due to a network fault or a short time StarRcoks restart.
+    // For precommit, the connector detects if an error has occurred and writes the failed data to the SR again.
+    // This configuration controls the number of failed retries. The default value is 3. -1 indicates unlimited retry.
+    public static final String SINK_MAXRETRIES = "sink.maxretries";
 
     public static final String[] mustRequiredConfigs = {
             STARROCKS_LOAD_URL,
@@ -146,6 +150,17 @@ public class StarRocksSinkConnectorConfig {
                         0,
                         ConfigDef.Width.NONE,
                         STARROCKS_TOPIC2TABLE_MAP
+                ).define(
+                        SINK_MAXRETRIES,
+                        ConfigDef.Type.LONG,
+                        3,
+                        ConfigDef.Range.between(-1, Long.MAX_VALUE),
+                        ConfigDef.Importance.LOW,
+                        "number of Stream Load retries after a stream load failure",
+                        CONFIG_GROUP_1,
+                        0,
+                        ConfigDef.Width.NONE,
+                        SINK_MAXRETRIES
                 );
     }
 }

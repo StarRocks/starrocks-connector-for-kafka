@@ -71,6 +71,9 @@ public class StarRocksSinkConnector extends SinkConnector {
         if (!connectorConfigs.containsKey(BUFFERFLUSH_INTERVALMS)) {
             connectorConfigs.put(BUFFERFLUSH_INTERVALMS, "1000");
         }
+        if (!connectorConfigs.containsKey(SINK_MAXRETRIES)) {
+            connectorConfigs.put(SINK_MAXRETRIES, "3");
+        }
         Config result = super.validate(connectorConfigs);
         for (String config : StarRocksSinkConnectorConfig.mustRequiredConfigs) {
             if (!connectorConfigs.containsKey(config)) {
