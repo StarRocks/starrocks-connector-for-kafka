@@ -271,6 +271,9 @@ public class StarRocksSinkTask extends SinkTask  {
             LOG.warn("Current retry times is " + retryCount);
             retryCount++;
             //  When an exception occurs, we re-initialize the SDK instance.
+            if (loadManager != null) {
+                loadManager.close();
+            }
             loadManager = buildLoadManager(loadProperties);
             //  Each time the SDK is checked for an exception, if an exception occurs, it is thrown, and the framework replays the data from the offset of the commit.
             throw new RuntimeException(flushException.getMessage());
