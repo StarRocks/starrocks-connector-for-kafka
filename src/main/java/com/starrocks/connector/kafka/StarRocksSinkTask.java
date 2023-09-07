@@ -41,7 +41,6 @@ public class StarRocksSinkTask extends SinkTask  {
         CSV,
         JSON
     }
-
     private SinkType sinkType;
     private static final Logger LOG = LoggerFactory.getLogger(StarRocksSinkTask.class);
     // topicname -> partiton -> offset
@@ -118,6 +117,7 @@ public class StarRocksSinkTask extends SinkTask  {
         } else {
             throw new RuntimeException("data format are not support");
         }
+        LOG.info("Starrocks sink type is " + sinkType.toString());
         // The Stream SDK must force the table name, which we set to _sr_default_table.
         // _sr_default_table will not be used.
         StreamLoadTableProperties.Builder defaultTablePropertiesBuilder = StreamLoadTableProperties.builder()
@@ -185,19 +185,37 @@ public class StarRocksSinkTask extends SinkTask  {
         return topic2Table.getOrDefault(topic, topic);
     }
 
-    private String getRecordFromSinkRecord(SinkRecord sinkRecord) {
+    public void setJsonConverter(JsonConverter jsonConverter) {
+        this.jsonConverter = jsonConverter;
+    }
+
+    public void setSinkType(SinkType sinkType) {
+        this.sinkType = sinkType;
+    }
+    public String getRecordFromSinkRecord(SinkRecord sinkRecord) {
+        if (sinkRecord == null) {
+            LOG.debug("Have got a null sink record");
+            return null;
+        }
+        Schema schema = sinkRecord.valueSchema();
+        if (schema == null) {
+            LOG.debug(String.format("Sink record value schema is null, the record is %s", sinkRecord.toString()));
+            return null;
+        }
         if (sinkType == SinkType.CSV) {
             // When the sink Type is CSV, make sure that the SinkRecord type is String
-            Schema schema = sinkRecord.valueSchema();
-            if (schema == null || schema.type() != Schema.Type.STRING) {
-                throw new RuntimeException("The sink type does not match the data type consumed");
+            if (schema.type() != Schema.Type.STRING) {
+                String errMsg = String.format("Sink record type is %s, which not Type.STRING, the record is %s", schema.type().getName(), sinkRecord.toString());
+                LOG.error(errMsg);
+                throw new RuntimeException(errMsg);
             }
             String row = (String) sinkRecord.value();
             return row;
         } else {
-            Schema schema = sinkRecord.valueSchema();
-            if (schema == null || schema.type() != Schema.Type.STRUCT) {
-                throw new RuntimeException("The sink type does not match the data type consumed");
+            if (schema.type() != Schema.Type.STRUCT) {
+                String errMsg = String.format("Sink record type is %s, which not Type.STRUCT, the record is %s", schema.type().getName(), sinkRecord.toString());
+                LOG.error(errMsg);
+                throw new RuntimeException(errMsg);
             }
             JsonNode jsonNodeDest = jsonConverter.convertToJson(sinkRecord.valueSchema(), sinkRecord.value());
             String row = jsonNodeDest.toString();
@@ -238,6 +256,9 @@ public class StarRocksSinkTask extends SinkTask  {
             //    this method. In the case of an exception, we initialize the new SDK and then throw an exception to the framework.
             //    In this case, the framework repulls the data from the commit point and then moves forward.
             String row = getRecordFromSinkRecord(record);
+            if (row == null) {
+                continue;
+            }
             try {
                 loadManager.write(null, database, getTableFromTopic(topic), row);
             } catch (Exception sdkException) {
