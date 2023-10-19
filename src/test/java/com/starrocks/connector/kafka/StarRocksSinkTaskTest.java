@@ -4,6 +4,7 @@ import io.debezium.data.Envelope;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
+import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.log4j.PropertyConfigurator;
 import org.junit.Assert;
@@ -53,16 +54,24 @@ public class StarRocksSinkTaskTest {
         }
 
         {
-            String errMsg = "";
             sinkTask.setSinkType(StarRocksSinkTask.SinkType.CSV);
-            Schema schema = SchemaBuilder.int8().build();
-            SinkRecord sinkRecord = new SinkRecord("dummy-topic", 0, null, null, schema, null, 0);
+            SinkRecord sinkRecord = new SinkRecord("dummy-topic", 0, null, null, null, "a,b,c", 0);
+            String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
+            Assert.assertEquals("a,b,c", row);
+        }
+
+        {
+            class Dummy {}
+            Dummy dummy = new Dummy();
+            sinkTask.setSinkType(StarRocksSinkTask.SinkType.CSV);
+            SinkRecord sinkRecord = new SinkRecord("dummy-topic", 0, null, null, null, dummy, 0);
+            String errMsg = "";
             try {
                 String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
-            } catch (RuntimeException re) {
-                errMsg = re.getMessage();
+            } catch (DataException e) {
+                errMsg = e.getMessage();
             }
-            Assert.assertEquals(true, errMsg.contains("which not Type.STRING"));
+            Assert.assertEquals(true, errMsg.contains("cannot be cast to java.lang.String"));
         }
 
         {
@@ -80,16 +89,12 @@ public class StarRocksSinkTaskTest {
         }
 
         {
-            String errMsg = "";
+            sinkTask.setJsonConverter(new JsonConverter());
             sinkTask.setSinkType(StarRocksSinkTask.SinkType.JSON);
-            Schema schema = SchemaBuilder.int8().build();
-            SinkRecord sinkRecord = new SinkRecord("dummy-topic", 0, null, null, schema, null, 0);
-            try {
-                String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
-            } catch (RuntimeException re) {
-                errMsg = re.getMessage();
-            }
-            Assert.assertEquals(true, errMsg.contains("which not Type.STRUCT"));
+            String value = "{\"name\":\"北京\",\"code\":1}";
+            SinkRecord sinkRecord = new SinkRecord("dummy-topic", 0, null, null, null, value, 0);
+            String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
+            Assert.assertEquals("\"{\\\"name\\\":\\\"北京\\\",\\\"code\\\":1}\"", row);
         }
 
         {

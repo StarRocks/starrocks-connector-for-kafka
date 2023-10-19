@@ -8,7 +8,7 @@ import com.starrocks.data.load.stream.properties.StreamLoadTableProperties;
 import com.starrocks.data.load.stream.v2.StreamLoadManagerV2;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.connect.data.Schema;
+import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTask;
 import org.slf4j.Logger;
@@ -117,6 +117,11 @@ public class StarRocksSinkTask extends SinkTask  {
         } else {
             throw new RuntimeException("data format are not support");
         }
+        // The default load format for the Starrocks Kafka Connector is JSON. If the format is not specified
+        // in the configuration file, it needs to be added to the props.
+        if (!props.containsKey(StarRocksSinkConnectorConfig.SINK_FORMAT)) {
+            props.put(StarRocksSinkConnectorConfig.SINK_FORMAT, "json");
+        }
         LOG.info("Starrocks sink type is " + sinkType.toString());
         // The Stream SDK must force the table name, which we set to _sr_default_table.
         // _sr_default_table will not be used.
@@ -133,6 +138,7 @@ public class StarRocksSinkTask extends SinkTask  {
         String password = props.get(StarRocksSinkConnectorConfig.STARROCKS_PASSWORD);
         String bufferFlushIntervalStr = props.getOrDefault(StarRocksSinkConnectorConfig.BUFFERFLUSH_INTERVALMS, "1000");
         int bufferFlushInterval = Integer.parseInt(bufferFlushIntervalStr);
+        parseSinkStreamLoadProperties();
         StreamLoadProperties.Builder builder = StreamLoadProperties.builder()
                 .loadUrls(loadUrl)
                 .defaultTableProperties(defaultTablePropertiesBuilder.build())
@@ -159,7 +165,6 @@ public class StarRocksSinkTask extends SinkTask  {
     public void start(Map<String, String> props) {
         LOG.info("Starrocks sink task starting. version is " + Util.VERSION);
         this.props = props;
-        parseSinkStreamLoadProperties();
         topicPartitionOffset = new HashMap<>();
         loadProperties = buildLoadProperties();
         loadManager = buildLoadManager(loadProperties);
@@ -192,34 +197,46 @@ public class StarRocksSinkTask extends SinkTask  {
     public void setSinkType(SinkType sinkType) {
         this.sinkType = sinkType;
     }
+
+    // This function is used to parse a SinkRecord and returns a String type row.
+    // There are several scenarios to consider:
+    // 1. If `sinkRecord` is null, return directly.
+    // 2. If the `value` of `sinkRecord` is null, return directly.
+    // 3. If the `valueSchema` of `sinkRecord` is null, it means that the received
+    //    data does not have a defined schema. In this case, an attempt is made to
+    //    parse it. If the parsing fails, a `DataException` exception will be thrown.
     public String getRecordFromSinkRecord(SinkRecord sinkRecord) {
         if (sinkRecord == null) {
             LOG.debug("Have got a null sink record");
             return null;
         }
-        Schema schema = sinkRecord.valueSchema();
-        if (schema == null) {
-            LOG.debug(String.format("Sink record value schema is null, the record is %s", sinkRecord.toString()));
+        if (sinkRecord.value() == null) {
+            LOG.debug(String.format("Sink record value is null, the record is %s", sinkRecord.toString()));
             return null;
         }
+        if (sinkRecord.valueSchema() == null) {
+            LOG.debug(String.format("Sink record value schema is null, the record is %s", sinkRecord.toString()));
+        }
+
         if (sinkType == SinkType.CSV) {
-            // When the sink Type is CSV, make sure that the SinkRecord type is String
-            if (schema.type() != Schema.Type.STRING) {
-                String errMsg = String.format("Sink record type is %s, which not Type.STRING, the record is %s", schema.type().getName(), sinkRecord.toString());
-                LOG.error(errMsg);
-                throw new RuntimeException(errMsg);
+            // When the sink Type is CSV, make sure that the SinkRecord.value type is String
+            String row = null;
+            try {
+                row = (String) sinkRecord.value();
+            } catch (ClassCastException e) {
+                LOG.error(e.getMessage());
+                throw new DataException(e.getMessage());
             }
-            String row = (String) sinkRecord.value();
             return row;
         } else {
-            if (schema.type() != Schema.Type.STRUCT) {
-                String errMsg = String.format("Sink record type is %s, which not Type.STRUCT, the record is %s", schema.type().getName(), sinkRecord.toString());
-                LOG.error(errMsg);
-                throw new RuntimeException(errMsg);
+            JsonNode jsonNodeDest = null;
+            try {
+                jsonNodeDest = jsonConverter.convertToJson(sinkRecord.valueSchema(), sinkRecord.value());
+            } catch (DataException dataException) {
+                LOG.error(dataException.getMessage());
+                throw dataException;
             }
-            JsonNode jsonNodeDest = jsonConverter.convertToJson(sinkRecord.valueSchema(), sinkRecord.value());
-            String row = jsonNodeDest.toString();
-            return row;
+            return jsonNodeDest.toString();
         }
     }
 
@@ -237,7 +254,7 @@ public class StarRocksSinkTask extends SinkTask  {
         Exception e = null;
         while (it.hasNext()) {
             final SinkRecord record = it.next();
-            LOG.debug(record.toString());
+            LOG.debug("Received record: " + record.toString());
             String topic = record.topic();
             int partition = record.kafkaPartition();
             if (!topicPartitionOffset.containsKey(topic)) {
@@ -256,6 +273,7 @@ public class StarRocksSinkTask extends SinkTask  {
             //    this method. In the case of an exception, we initialize the new SDK and then throw an exception to the framework.
             //    In this case, the framework repulls the data from the commit point and then moves forward.
             String row = getRecordFromSinkRecord(record);
+            LOG.debug("Parsed row: " + row);
             if (row == null) {
                 continue;
             }
@@ -301,7 +319,6 @@ public class StarRocksSinkTask extends SinkTask  {
         } else {
             retryCount = 0;
         }
-        loadManager.flush();
         for (TopicPartition topicPartition : offsets.keySet()) {
             if (!topicPartitionOffset.containsKey(topicPartition.topic()) || !topicPartitionOffset.get(topicPartition.topic()).containsKey(topicPartition.partition())) {
                 continue;
