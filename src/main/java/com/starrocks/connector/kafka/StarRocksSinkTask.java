@@ -1,7 +1,9 @@
 package com.starrocks.connector.kafka;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.starrocks.connector.kafka.json.DecimalFormat;
 import com.starrocks.connector.kafka.json.JsonConverter;
+import com.starrocks.connector.kafka.json.JsonConverterConfig;
 import com.starrocks.data.load.stream.StreamLoadDataFormat;
 import com.starrocks.data.load.stream.properties.StreamLoadProperties;
 import com.starrocks.data.load.stream.properties.StreamLoadTableProperties;
@@ -58,6 +60,7 @@ public class StarRocksSinkTask extends SinkTask  {
     private long maxRetryTimes;
     private long retryCount = 0;
     private HashMap<TopicPartition, OffsetAndMetadata> synced = new HashMap<>();
+    private Throwable sdkException;
 
     private StreamLoadManagerV2 buildLoadManager(StreamLoadProperties loadProperties) {
         StreamLoadManagerV2 manager = new StreamLoadManagerV2(loadProperties, true);
@@ -161,6 +164,15 @@ public class StarRocksSinkTask extends SinkTask  {
         return Util.VERSION;
     }
 
+    public static JsonConverter createJsonConverter() {
+        JsonConverter converter = new JsonConverter();
+        Map<String, Object> conf = new HashMap<>();
+        conf.put(JsonConverterConfig.REPLACE_NULL_WITH_DEFAULT_CONFIG, (Object) false);
+        conf.put(JsonConverterConfig.DECIMAL_FORMAT_CONFIG, DecimalFormat.NUMERIC.name());
+        converter.configure(conf, false);
+        return converter;
+    }
+
     @Override
     public void start(Map<String, String> props) {
         LOG.info("Starrocks sink task starting. version is " + Util.VERSION);
@@ -169,7 +181,7 @@ public class StarRocksSinkTask extends SinkTask  {
         loadProperties = buildLoadProperties();
         loadManager = buildLoadManager(loadProperties);
         topic2Table = getTopicToTableMap(props);
-        jsonConverter = new JsonConverter();
+        jsonConverter = createJsonConverter();
         maxRetryTimes = Long.parseLong(props.getOrDefault(StarRocksSinkConnectorConfig.SINK_MAXRETRIES, "3"));
         LOG.info("Starrocks sink task started. version is " + Util.VERSION);
     }
@@ -244,9 +256,11 @@ public class StarRocksSinkTask extends SinkTask  {
     public void put(Collection<SinkRecord> records) {
         if (maxRetryTimes != -1) {
             if (retryCount > maxRetryTimes) {
-                LOG.error("Stream load failure " + retryCount + " times, which bigger than maxRetryTimes " + maxRetryTimes);
-                LOG.error("Error message is " + loadManager.getException().getMessage() + ", sink task will be stopped");
-                throw new RuntimeException(loadManager.getException());
+                LOG.error("Stream load failure " + retryCount + " times, which bigger than maxRetryTimes "
+                            + maxRetryTimes + ", sink task will be stopped");
+                assert sdkException != null;
+                LOG.error("Error message is ", sdkException);
+                throw new RuntimeException(sdkException);
             }
         }
         Iterator<SinkRecord> it = records.iterator();
@@ -279,12 +293,12 @@ public class StarRocksSinkTask extends SinkTask  {
             }
             try {
                 loadManager.write(null, database, getTableFromTopic(topic), row);
-            } catch (Exception sdkException) {
-                LOG.error("put error: " + sdkException.getMessage() +
+            } catch (Exception writeException) {
+                LOG.error("put error: " + writeException.getMessage() +
                           " topic, partition, offset is " + topic + ", " + record.kafkaPartition() + ", " + record.kafkaOffset());
-                sdkException.printStackTrace();
+                writeException.printStackTrace();
                 occurException = true;
-                e = sdkException;
+                e = writeException;
                 break;
             }
         }
@@ -306,6 +320,8 @@ public class StarRocksSinkTask extends SinkTask  {
             flushException = loadManager.getException();
         }
         if (flushException != null) {
+            // Update SDK exception
+            sdkException = flushException;
             LOG.warn("Stream load failure, " + flushException.getMessage() + ", will retry");
             LOG.warn("Current retry times is " + retryCount);
             retryCount++;
@@ -318,6 +334,7 @@ public class StarRocksSinkTask extends SinkTask  {
             throw new RuntimeException(flushException.getMessage());
         } else {
             retryCount = 0;
+            sdkException = null;
         }
         for (TopicPartition topicPartition : offsets.keySet()) {
             if (!topicPartitionOffset.containsKey(topicPartition.topic()) || !topicPartitionOffset.get(topicPartition.topic()).containsKey(topicPartition.partition())) {
