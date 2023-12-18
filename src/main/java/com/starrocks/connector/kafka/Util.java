@@ -28,7 +28,7 @@ import java.util.Map;
 
 public class Util {
     private static final Logger LOG = LoggerFactory.getLogger(Util.class);
-    public static final String VERSION = "1.0.2";
+    public static final String VERSION = "1.0.3";
 
     static boolean isValidStarrocksTableName(String tableName) {
         return tableName.matches("^([_a-zA-Z]{1}[_$a-zA-Z0-9]+\\.){0,2}[_a-zA-Z]{1}[_$a-zA-Z0-9]+$");
