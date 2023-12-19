@@ -82,6 +82,11 @@ public class StarRocksSinkTask extends SinkTask  {
     private HashMap<TopicPartition, OffsetAndMetadata> synced = new HashMap<>();
     private Throwable sdkException;
 
+    private long buffMaxbytes;
+    private long bufferFlushInterval;
+    private long currentBufferBytes = 0;
+    private long lastFlushTime = 0;
+
     private StreamLoadManagerV2 buildLoadManager(StreamLoadProperties loadProperties) {
         StreamLoadManagerV2 manager = new StreamLoadManagerV2(loadProperties, true);
         manager.init();
@@ -154,13 +159,13 @@ public class StarRocksSinkTask extends SinkTask  {
                 .streamLoadDataFormat(dataFormat)
                 .chunkLimit(getChunkLimit());
         String buffMaxbytesStr = props.getOrDefault(StarRocksSinkConnectorConfig.BUFFERFLUSH_MAXBYTES, "67108864");
-        long buffMaxbytes = Long.parseLong(buffMaxbytesStr);
+        buffMaxbytes = Long.parseLong(buffMaxbytesStr);
         String connectTimeoutmsStr = props.getOrDefault(StarRocksSinkConnectorConfig.CONNECT_TIMEOUTMS, "100");
         int connectTimeoutms = Integer.parseInt(connectTimeoutmsStr);
         String username = props.get(StarRocksSinkConnectorConfig.STARROCKS_USERNAME);
         String password = props.get(StarRocksSinkConnectorConfig.STARROCKS_PASSWORD);
         String bufferFlushIntervalStr = props.getOrDefault(StarRocksSinkConnectorConfig.BUFFERFLUSH_INTERVALMS, "1000");
-        int bufferFlushInterval = Integer.parseInt(bufferFlushIntervalStr);
+        bufferFlushInterval = Long.parseLong(bufferFlushIntervalStr);
         parseSinkStreamLoadProperties();
         StreamLoadProperties.Builder builder = StreamLoadProperties.builder()
                 .loadUrls(loadUrl)
@@ -313,6 +318,7 @@ public class StarRocksSinkTask extends SinkTask  {
             }
             try {
                 loadManager.write(null, database, getTableFromTopic(topic), row);
+                currentBufferBytes += row.getBytes().length;
             } catch (Exception writeException) {
                 LOG.error("put error: " + writeException.getMessage() +
                           " topic, partition, offset is " + topic + ", " + record.kafkaPartition() + ", " + record.kafkaOffset());
@@ -330,11 +336,22 @@ public class StarRocksSinkTask extends SinkTask  {
 
     @Override
     public Map<TopicPartition, OffsetAndMetadata> preCommit(Map<TopicPartition, OffsetAndMetadata> offsets) {
+        LOG.info("receive preCommit currentBufferBytes {} lastFlushTime {}", currentBufferBytes, lastFlushTime);
+        // return previous offset when buffer size and flush interval are not reached
+        if (currentBufferBytes < buffMaxbytes && System.currentTimeMillis() - lastFlushTime < bufferFlushInterval
+                && topicPartitionOffset.keySet().equals(synced.keySet())) {
+            return synced;
+        }
         Throwable flushException = null;
         try {
+            LOG.info("SR sink flush currentBufferBytes (} and SecsSinceLastFlushTime {}",
+                    currentBufferBytes, (System.currentTimeMillis() - lastFlushTime) / 1000);
             loadManager.flush();
         } catch (Exception e) {
             flushException = e;
+        } finally {
+            lastFlushTime = System.currentTimeMillis();
+            currentBufferBytes = 0;
         }
         if (flushException == null) {
             flushException = loadManager.getException();
