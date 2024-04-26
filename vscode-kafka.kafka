@@ -1,3 +1,8 @@
+CONSUMER postgres-debezium
+topic: postgres.public.customer
+partitions: 0
+from: 1
+
 PRODUCER debezium-test-message
 topic: postgres.public.customer
 {
