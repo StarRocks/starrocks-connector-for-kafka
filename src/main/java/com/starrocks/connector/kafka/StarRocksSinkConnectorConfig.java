@@ -141,7 +141,7 @@ public class StarRocksSinkConnectorConfig {
                         STARROCKS_PASSWORD,
                         ConfigDef.Type.STRING,
                         null,
-                        new ConfigDef.NonEmptyString(),
+                        null,
                         ConfigDef.Importance.HIGH,
                         "starrocks password",
                         CONFIG_GROUP_1,
