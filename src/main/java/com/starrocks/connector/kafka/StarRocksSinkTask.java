@@ -150,14 +150,16 @@ public class StarRocksSinkTask extends SinkTask  {
         if (!props.containsKey(StarRocksSinkConnectorConfig.SINK_FORMAT)) {
             props.put(StarRocksSinkConnectorConfig.SINK_FORMAT, "json");
         }
-        LOG.info("Starrocks sink type is " + sinkType.toString());
+        parseSinkStreamLoadProperties();
+        LOG.info("Starrocks sink type is {}, stream load properties: {}", sinkType, streamLoadProps);
         // The Stream SDK must force the table name, which we set to _sr_default_table.
         // _sr_default_table will not be used.
         StreamLoadTableProperties.Builder defaultTablePropertiesBuilder = StreamLoadTableProperties.builder()
                 .database(database)
                 .table("_sr_default_table")
                 .streamLoadDataFormat(dataFormat)
-                .chunkLimit(getChunkLimit());
+                .chunkLimit(getChunkLimit())
+                .addCommonProperties(streamLoadProps);
         String buffMaxbytesStr = props.getOrDefault(StarRocksSinkConnectorConfig.BUFFERFLUSH_MAXBYTES, "67108864");
         buffMaxbytes = Long.parseLong(buffMaxbytesStr);
         String connectTimeoutmsStr = props.getOrDefault(StarRocksSinkConnectorConfig.CONNECT_TIMEOUTMS, "100");
@@ -166,7 +168,6 @@ public class StarRocksSinkTask extends SinkTask  {
         String password = props.get(StarRocksSinkConnectorConfig.STARROCKS_PASSWORD);
         String bufferFlushIntervalStr = props.getOrDefault(StarRocksSinkConnectorConfig.BUFFERFLUSH_INTERVALMS, "1000");
         bufferFlushInterval = Long.parseLong(bufferFlushIntervalStr);
-        parseSinkStreamLoadProperties();
         StreamLoadProperties.Builder builder = StreamLoadProperties.builder()
                 .loadUrls(loadUrl)
                 .defaultTableProperties(defaultTablePropertiesBuilder.build())
