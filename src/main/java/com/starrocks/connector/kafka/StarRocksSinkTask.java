@@ -295,17 +295,21 @@ public class StarRocksSinkTask extends SinkTask  {
         while (it.hasNext()) {
             final SinkRecord record = it.next();
             LOG.debug("Received record: " + record.toString());
+
+            String originalTopic = record.originalTopic();
             String topic = record.topic();
-            int partition = record.kafkaPartition();
-            if (!topicPartitionOffset.containsKey(topic)) {
-                topicPartitionOffset.put(topic, new HashMap<>());
+
+            int originalPartition = record.originalKafkaPartition();
+            if (!topicPartitionOffset.containsKey(originalTopic)) {
+                topicPartitionOffset.put(originalTopic, new HashMap<>());
+                LOG.info("Adding new topic partition {}", originalTopic);
             }
-            TopicPartition tp = new TopicPartition(topic, partition);
+            TopicPartition tp = new TopicPartition(originalTopic, originalPartition);
             OffsetAndMetadata om = synced.get(tp);
             if (om != null && om.offset() >= record.kafkaOffset()) {
                 continue;
             }
-            topicPartitionOffset.get(topic).put(partition, record.kafkaOffset());
+            topicPartitionOffset.get(originalTopic).put(originalPartition, record.originalKafkaOffset());
             // The sdk does not provide the ability to clean up exceptions, that is to say, according to the current implementation of the SDK,
             // after an Exception occurs, the SDK must be re-initialized, which is based on flink:
             // 1. When an exception occurs, put will continue to fail, at which point we do nothing and let put move forward.
@@ -322,7 +326,7 @@ public class StarRocksSinkTask extends SinkTask  {
                 currentBufferBytes += row.getBytes().length;
             } catch (Exception writeException) {
                 LOG.error("put error: " + writeException.getMessage() +
-                          " topic, partition, offset is " + topic + ", " + record.kafkaPartition() + ", " + record.kafkaOffset());
+                          " topic, partition, offset is " + originalTopic + ", " + originalPartition + ", " + record.originalKafkaOffset());
                 writeException.printStackTrace();
                 occurException = true;
                 e = writeException;
@@ -345,7 +349,7 @@ public class StarRocksSinkTask extends SinkTask  {
         }
         Throwable flushException = null;
         try {
-            LOG.info("SR sink flush currentBufferBytes (} and SecsSinceLastFlushTime {}",
+            LOG.info("SR sink flush currentBufferBytes {} and SecsSinceLastFlushTime {}",
                     currentBufferBytes, (System.currentTimeMillis() - lastFlushTime) / 1000);
             loadManager.flush();
         } catch (Exception e) {
@@ -381,6 +385,7 @@ public class StarRocksSinkTask extends SinkTask  {
             LOG.info("commit: topic: " + topicPartition.topic() + ", partition: " + topicPartition.partition() + ", offset: " + topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition()));
             synced.put(topicPartition, new OffsetAndMetadata(topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition())));
         }
+        LOG.info("Precommit offset metas, received: {}, maintained: {}, returned: {}", new Object[] { offsets, this.topicPartitionOffset, this.synced });
         return synced;
     }
 
