@@ -385,7 +385,6 @@ public class StarRocksSinkTask extends SinkTask  {
             LOG.info("commit: topic: " + topicPartition.topic() + ", partition: " + topicPartition.partition() + ", offset: " + topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition()));
             synced.put(topicPartition, new OffsetAndMetadata(topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition())));
         }
-        LOG.info("Precommit offset metas, received: {}, maintained: {}, returned: {}", new Object[] { offsets, this.topicPartitionOffset, this.synced });
         return synced;
     }
 
