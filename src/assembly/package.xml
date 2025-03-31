@@ -18,6 +18,7 @@
                 <exclude>org.apache,kafka.connect.*</exclude>
                 <exclude>org.apache.kafka.connect.*</exclude>
                 <exclude>org.apache.kafka:connect-api</exclude>
+                <exclude>com.starrocks:starrocks-stream-load-sdk</exclude>
             </excludes>
         </dependencySet>
     </dependencySets>
