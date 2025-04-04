@@ -480,6 +480,8 @@ public class StarRocksSinkTaskV2 extends SinkTask  {
             flushOrThrow(loadManager);
         } catch (Exception e) {
             loadManager = buildLoadManager(loadProperties);
+
+            throw e;
         }
         
     }
