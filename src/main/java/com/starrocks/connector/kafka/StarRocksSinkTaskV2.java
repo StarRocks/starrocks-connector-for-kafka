@@ -446,7 +446,7 @@ public class StarRocksSinkTaskV2 extends SinkTask  {
             sdkException = e;
             retryCount++;
 
-            throw new RuntimeException(e.getMessage());
+            throw new RuntimeException(e);
         } finally {
             lastFlushTime = System.currentTimeMillis();
             currentBufferBytes = 0;
@@ -467,7 +467,9 @@ public class StarRocksSinkTaskV2 extends SinkTask  {
             StreamLoadManagerV2 tableManager = tablesLoadManagers.get(table);
 
             try {
-                flushOrThrow(tableManager);
+                if (tableManager != null) {
+                    flushOrThrow(tableManager);
+                }
             } catch (Throwable e) {
                 StreamLoadManagerV2 newTableManager = buildLoadManager(tablesLoadProperties.get(table));
                 tablesLoadManagers.put(table, newTableManager);
