@@ -12,6 +12,9 @@
     <dependencySets>
         <dependencySet>
             <outputDirectory>share/java/starrocks-kafka-connector/</outputDirectory>
+            <excludes>
+                <exclude>com.starrocks:starrocks-stream-load-sdk</exclude>
+            </excludes>
         </dependencySet>
     </dependencySets>
 </assembly>
