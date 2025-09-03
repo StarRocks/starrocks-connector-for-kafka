@@ -20,14 +20,12 @@
 
 package com.starrocks.connector.kafka;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.starrocks.connector.kafka.json.DecimalFormat;
-import com.starrocks.connector.kafka.json.JsonConverter;
-import com.starrocks.connector.kafka.json.JsonConverterConfig;
-import com.starrocks.data.load.stream.StreamLoadDataFormat;
-import com.starrocks.data.load.stream.properties.StreamLoadProperties;
-import com.starrocks.data.load.stream.properties.StreamLoadTableProperties;
-import com.starrocks.data.load.stream.v2.StreamLoadManagerV2;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.DataException;
@@ -36,10 +34,14 @@ import org.apache.kafka.connect.sink.SinkTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.starrocks.connector.kafka.json.DecimalFormat;
+import com.starrocks.connector.kafka.json.JsonConverter;
+import com.starrocks.connector.kafka.json.JsonConverterConfig;
+import com.starrocks.data.load.stream.StreamLoadDataFormat;
+import com.starrocks.data.load.stream.properties.StreamLoadProperties;
+import com.starrocks.data.load.stream.properties.StreamLoadTableProperties;
+import com.starrocks.data.load.stream.v2.StreamLoadManagerV2;
 
 
 //  Please reference to: https://docs.confluent.io/platform/7.4/connect/javadocs/javadoc/org/apache/kafka/connect/sink/SinkTask.html
@@ -65,8 +67,6 @@ public class StarRocksSinkTask extends SinkTask  {
     }
     private SinkType sinkType;
     private static final Logger LOG = LoggerFactory.getLogger(StarRocksSinkTask.class);
-    // topicname -> partiton -> offset
-    private HashMap<String, HashMap<Integer, Long>> topicPartitionOffset;
     private StreamLoadManagerV2 loadManager;
     private Map<String, String> props;
     private StreamLoadProperties loadProperties;
@@ -79,7 +79,6 @@ public class StarRocksSinkTask extends SinkTask  {
     private JsonConverter jsonConverter;
     private long maxRetryTimes;
     private long retryCount = 0;
-    private HashMap<TopicPartition, OffsetAndMetadata> synced = new HashMap<>();
     private Throwable sdkException;
 
     private long buffMaxbytes;
@@ -203,7 +202,6 @@ public class StarRocksSinkTask extends SinkTask  {
     public void start(Map<String, String> props) {
         LOG.info("Starrocks sink task starting. version is " + Util.VERSION);
         this.props = props;
-        topicPartitionOffset = new HashMap<>();
         loadProperties = buildLoadProperties();
         loadManager = buildLoadManager(loadProperties);
         topic2Table = getTopicToTableMap(props);
@@ -280,9 +278,10 @@ public class StarRocksSinkTask extends SinkTask  {
 
     @Override
     public void put(Collection<SinkRecord> records) {
+        long start = System.currentTimeMillis();
         if (maxRetryTimes != -1) {
             if (retryCount > maxRetryTimes) {
-                LOG.error("Stream load failure " + retryCount + " times, which bigger than maxRetryTimes "
+                LOG.error("Starrocks Put failure " + retryCount + " times, which bigger than maxRetryTimes "
                             + maxRetryTimes + ", sink task will be stopped");
                 assert sdkException != null;
                 LOG.error("Error message is ", sdkException);
@@ -292,24 +291,16 @@ public class StarRocksSinkTask extends SinkTask  {
         Iterator<SinkRecord> it = records.iterator();
         boolean occurException = false;
         Exception e = null;
+        SinkRecord record = null;
+        SinkRecord firstRecord = null;
         while (it.hasNext()) {
-            final SinkRecord record = it.next();
+            record = it.next();
+            if (firstRecord == null) {
+                firstRecord = record;
+            }
             LOG.debug("Received record: " + record.toString());
 
-            String originalTopic = record.originalTopic();
             String topic = record.topic();
-
-            int originalPartition = record.originalKafkaPartition();
-            if (!topicPartitionOffset.containsKey(originalTopic)) {
-                topicPartitionOffset.put(originalTopic, new HashMap<>());
-                LOG.info("Adding new topic partition {}", originalTopic);
-            }
-            TopicPartition tp = new TopicPartition(originalTopic, originalPartition);
-            OffsetAndMetadata om = synced.get(tp);
-            if (om != null && om.offset() >= record.kafkaOffset()) {
-                continue;
-            }
-            topicPartitionOffset.get(originalTopic).put(originalPartition, record.originalKafkaOffset());
             // The sdk does not provide the ability to clean up exceptions, that is to say, according to the current implementation of the SDK,
             // after an Exception occurs, the SDK must be re-initialized, which is based on flink:
             // 1. When an exception occurs, put will continue to fail, at which point we do nothing and let put move forward.
@@ -325,8 +316,8 @@ public class StarRocksSinkTask extends SinkTask  {
                 loadManager.write(null, database, getTableFromTopic(topic), row);
                 currentBufferBytes += row.getBytes().length;
             } catch (Exception writeException) {
-                LOG.error("put error: " + writeException.getMessage() +
-                          " topic, partition, offset is " + originalTopic + ", " + originalPartition + ", " + record.originalKafkaOffset());
+                LOG.error("Starrocks Put error: " + writeException.getMessage() +
+                          " topic, partition, offset is " + topic + ", " + record.kafkaPartition() + ", " + record.kafkaOffset());
                 writeException.printStackTrace();
                 occurException = true;
                 e = writeException;
@@ -335,22 +326,36 @@ public class StarRocksSinkTask extends SinkTask  {
         }
 
         if (occurException && e != null) {
-            LOG.info("put occurs exception, Err: " + e.getMessage());
+            LOG.info("Starrocks Put occurs exception, Err {} currentBufferBytes {} recordRange [{}:{}-{}:{}] cost {}ms",
+                    e.getMessage(), currentBufferBytes, 
+                    firstRecord == null ? null : firstRecord.kafkaPartition(),
+                    firstRecord == null ? null : firstRecord.kafkaOffset(),
+                    record == null ? null : record.kafkaPartition(),
+                    record == null ? null : record.kafkaOffset(), System.currentTimeMillis() - start);
+        } else {
+            LOG.info("Starrocks Put success, currentBufferBytes {} recordRange [{}:{}-{}:{}] cost {}ms",
+                    currentBufferBytes, 
+                    firstRecord == null ? null : firstRecord.kafkaPartition(),
+                    firstRecord == null ? null : firstRecord.kafkaOffset(),
+                    record == null ? null : record.kafkaPartition(),
+                    record == null ? null : record.kafkaOffset(), System.currentTimeMillis() - start);
         }
     }
 
     @Override
     public Map<TopicPartition, OffsetAndMetadata> preCommit(Map<TopicPartition, OffsetAndMetadata> offsets) {
-        LOG.info("receive preCommit currentBufferBytes {} lastFlushTime {}", currentBufferBytes, lastFlushTime);
+        long start = System.currentTimeMillis();
         // return previous offset when buffer size and flush interval are not reached
-        if (currentBufferBytes < buffMaxbytes && System.currentTimeMillis() - lastFlushTime < bufferFlushInterval
-                && topicPartitionOffset.keySet().equals(synced.keySet())) {
-            return synced;
+        if (currentBufferBytes < buffMaxbytes && System.currentTimeMillis() - lastFlushTime < bufferFlushInterval) {
+            LOG.info("Starrocks skip preCommit currentBufferBytes {} less than buffMaxbytes {}"
+                    + " or SinceLastFlushTime {} less than bufferFlushInterval {}",
+                    currentBufferBytes, buffMaxbytes, System.currentTimeMillis() - lastFlushTime, bufferFlushInterval);
+            return Collections.emptyMap();
         }
         Throwable flushException = null;
         try {
-            LOG.info("SR sink flush currentBufferBytes {} and SecsSinceLastFlushTime {}",
-                    currentBufferBytes, (System.currentTimeMillis() - lastFlushTime) / 1000);
+            LOG.info("Starrocks preCommit flush currentBufferBytes {} and SinceLastFlushTime {}",
+                    currentBufferBytes, System.currentTimeMillis() - lastFlushTime);
             loadManager.flush();
         } catch (Exception e) {
             flushException = e;
@@ -364,28 +369,22 @@ public class StarRocksSinkTask extends SinkTask  {
         if (flushException != null) {
             // Update SDK exception
             sdkException = flushException;
-            LOG.warn("Stream load failure, " + flushException.getMessage() + ", will retry");
-            LOG.warn("Current retry times is " + retryCount);
             retryCount++;
             //  When an exception occurs, we re-initialize the SDK instance.
             if (loadManager != null) {
                 loadManager.close();
             }
             loadManager = buildLoadManager(loadProperties);
+            LOG.warn("Starrocks preCommit flush fail err {} retry times {} cost {}ms",
+                    flushException.getMessage(), retryCount, System.currentTimeMillis() - start);
             //  Each time the SDK is checked for an exception, if an exception occurs, it is thrown, and the framework replays the data from the offset of the commit.
             throw new RuntimeException(flushException.getMessage());
         } else {
             retryCount = 0;
             sdkException = null;
+            LOG.info("Starrocks preCommit flush success offsets {} cost {}ms", offsets, System.currentTimeMillis() - start);
         }
-        for (TopicPartition topicPartition : offsets.keySet()) {
-            if (!topicPartitionOffset.containsKey(topicPartition.topic()) || !topicPartitionOffset.get(topicPartition.topic()).containsKey(topicPartition.partition())) {
-                continue;
-            }
-            LOG.info("commit: topic: " + topicPartition.topic() + ", partition: " + topicPartition.partition() + ", offset: " + topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition()));
-            synced.put(topicPartition, new OffsetAndMetadata(topicPartitionOffset.get(topicPartition.topic()).get(topicPartition.partition())));
-        }
-        return synced;
+        return offsets;
     }
 
     @Override
