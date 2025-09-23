@@ -6,7 +6,7 @@
 
     <groupId>org.example</groupId>
     <artifactId>starrocks-connector-for-kafka</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.0.5</version>
 
     <properties>
         <maven.compiler.source>8</maven.compiler.source>
@@ -47,6 +47,16 @@
             </releases>
             <snapshots>
                 <enabled>true</enabled>
+            </snapshots>
+        </repository>
+        <repository>
+            <id>ossrh-releases</id>
+            <url>https://s01.oss.sonatype.org/content/repositories/releases</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
             </snapshots>
         </repository>
     </repositories>
@@ -140,8 +150,7 @@
         <dependency>
             <groupId>com.starrocks</groupId>
             <artifactId>starrocks-stream-load-sdk</artifactId>
-            <version>1.0-SNAPSHOT</version>
-            <classifier>jar-with-dependencies</classifier>
+            <version>1.0</version>
         </dependency>
 
         <dependency>
