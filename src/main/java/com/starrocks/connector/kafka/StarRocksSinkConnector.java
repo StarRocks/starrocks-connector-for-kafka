@@ -96,8 +96,10 @@ public class StarRocksSinkConnector extends SinkConnector {
         }
         Config result = super.validate(connectorConfigs);
         for (String config : StarRocksSinkConnectorConfig.mustRequiredConfigs) {
-            if (!connectorConfigs.containsKey(config)) {
-                throw new RuntimeException("You must specify" + config);
+            for (ConfigValue v : result.configValues()) {
+                if (v.name().equals(config) && !connectorConfigs.containsKey(config)) {
+                    v.addErrorMessage("You must specify " + config);
+                }
             }
         }
         return result;
