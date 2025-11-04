@@ -88,7 +88,7 @@ public class StarRocksSinkConnectorConfig {
                         null,
                         new ConfigDef.NonEmptyString(),
                         ConfigDef.Importance.HIGH,
-                        "starrocks datbase name",
+                        "starrocks database name",
                         CONFIG_GROUP_1,
                         0,
                         ConfigDef.Width.NONE,
