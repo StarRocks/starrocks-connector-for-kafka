@@ -1,0 +1,33 @@
+name: Review Pipeline
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+
+    branches:
+      - main
+
+concurrency:
+  group: review-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  ai_review:
+    name: AI Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: AI Review
+        shell: bash
+        run: |
+          PR_NUMBER=${{ github.event.number }}
+          GITHUB_REPOSITORY=${{ github.repository }}
+          AI_REVIEW_URL=${{ secrets.AI_REVIEW_URL }}
+          curl --silent --location "${AI_REVIEW_URL}" \
+            --header 'Accept: application/json' \
+            --header 'Content-Type: application/json' \
+            --data '{
+              "repository": "'"${GITHUB_REPOSITORY}"'",
+              "pr_id": "'"${PR_NUMBER}"'"
+            }'
