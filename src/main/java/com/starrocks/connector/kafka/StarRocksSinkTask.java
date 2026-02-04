@@ -389,6 +389,12 @@ public class StarRocksSinkTask extends SinkTask  {
 
     @Override
     public void stop() {
+        if (loadManager != null) {
+            loadManager.close();
+        }
+        if (jsonConverter != null) {
+            jsonConverter.close();
+        }
         LOG.info("Starrocks sink task stopped. version is " + Util.VERSION);
     }
 }
