@@ -53,6 +53,8 @@ public class StarRocksSinkConnectorConfig {
     public static final String BUFFERFLUSH_INTERVALMS = "bufferflush.intervalms";
     // Stream Load parameters, which controls the load behavior.
     public static final String SINK_PROPERTIES_PREFIX = "sink.properties.";
+    // Regex Prefix for the Stream Load table specific parameters
+    public static final String SINK_TABLE_PROPERTIES_REGEX_PREFIX = "sink\\.table\\.(.+)\\.properties\\.(.+)";
     // When the topic name does not match the SR table name,
     // this configuration item provides a mapping in the following format:
     // <topic-1>:<table-1>,<topic-2>:<table-2>,...
