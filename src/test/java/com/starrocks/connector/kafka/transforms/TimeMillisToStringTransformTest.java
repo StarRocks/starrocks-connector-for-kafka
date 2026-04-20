@@ -25,8 +25,9 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.data.Time;
 import org.apache.kafka.connect.sink.SinkRecord;
-import org.junit.Assert;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.Date;
 import java.util.HashMap;
@@ -71,14 +72,14 @@ public class TimeMillisToStringTransformTest {
         SinkRecord result = transform.apply(record);
 
         Struct resultValue = (Struct) result.value();
-        Assert.assertEquals("18:02:37", resultValue.get("TMCTDR"));
-        Assert.assertEquals("18:02:37", resultValue.get("TMLDDR"));
-        Assert.assertEquals(1, resultValue.get("id"));
-        Assert.assertEquals("test", resultValue.get("name"));
-        Assert.assertEquals(100.0, resultValue.get("amount"));
+        assertEquals("18:02:37", resultValue.get("TMCTDR"));
+        assertEquals("18:02:37", resultValue.get("TMLDDR"));
+        assertEquals(1, resultValue.get("id"));
+        assertEquals("test", resultValue.get("name"));
+        assertEquals(100.0, resultValue.get("amount"));
 
-        Assert.assertEquals(Schema.Type.STRING, result.valueSchema().field("TMCTDR").schema().type());
-        Assert.assertEquals(Schema.Type.STRING, result.valueSchema().field("TMLDDR").schema().type());
+        assertEquals(Schema.Type.STRING, result.valueSchema().field("TMCTDR").schema().type());
+        assertEquals(Schema.Type.STRING, result.valueSchema().field("TMLDDR").schema().type());
 
         transform.close();
     }
@@ -102,8 +103,8 @@ public class TimeMillisToStringTransformTest {
         SinkRecord result = transform.apply(record);
 
         Struct resultValue = (Struct) result.value();
-        Assert.assertEquals("18:02:37", resultValue.get("TMCTDR"));
-        Assert.assertTrue(resultValue.get("TMLDDR") instanceof Date);
+        assertEquals("18:02:37", resultValue.get("TMCTDR"));
+        assertTrue(resultValue.get("TMLDDR") instanceof Date);
 
         transform.close();
     }
@@ -127,8 +128,8 @@ public class TimeMillisToStringTransformTest {
         SinkRecord result = transform.apply(record);
 
         Struct resultValue = (Struct) result.value();
-        Assert.assertEquals("18:02:37.000", resultValue.get("TMCTDR"));
-        Assert.assertEquals("18:02:37.123", resultValue.get("TMLDDR"));
+        assertEquals("18:02:37.000", resultValue.get("TMCTDR"));
+        assertEquals("18:02:37.123", resultValue.get("TMLDDR"));
 
         transform.close();
     }
@@ -151,8 +152,8 @@ public class TimeMillisToStringTransformTest {
         SinkRecord result = transform.apply(record);
 
         Struct resultValue = (Struct) result.value();
-        Assert.assertNull(resultValue.get("TMCTDR"));
-        Assert.assertEquals("18:02:37", resultValue.get("TMLDDR"));
+        assertNull(resultValue.get("TMCTDR"));
+        assertEquals("18:02:37", resultValue.get("TMLDDR"));
 
         transform.close();
     }
@@ -166,7 +167,7 @@ public class TimeMillisToStringTransformTest {
         SinkRecord record = new SinkRecord("test-topic", 0, null, null, null, null, 0);
         SinkRecord result = transform.apply(record);
 
-        Assert.assertNull(result.value());
+        assertNull(result.value());
 
         transform.close();
     }
@@ -189,7 +190,7 @@ public class TimeMillisToStringTransformTest {
         SinkRecord record = createRecord(schema, value);
         SinkRecord result = transform.apply(record);
 
-        Assert.assertSame(record, result);
+        assertSame(record, result);
 
         transform.close();
     }
@@ -210,7 +211,7 @@ public class TimeMillisToStringTransformTest {
         SinkRecord record = createRecord(schema, value);
         SinkRecord result = transform.apply(record);
 
-        Assert.assertEquals("00:00:00", ((Struct) result.value()).get("time"));
+        assertEquals("00:00:00", ((Struct) result.value()).get("time"));
 
         transform.close();
     }
@@ -231,7 +232,7 @@ public class TimeMillisToStringTransformTest {
         SinkRecord record = createRecord(schema, value);
         SinkRecord result = transform.apply(record);
 
-        Assert.assertEquals("23:59:59", ((Struct) result.value()).get("time"));
+        assertEquals("23:59:59", ((Struct) result.value()).get("time"));
 
         transform.close();
     }
@@ -253,7 +254,7 @@ public class TimeMillisToStringTransformTest {
         SinkRecord record = createRecord(schema, value);
         SinkRecord result = transform.apply(record);
 
-        Assert.assertEquals("23:59:59.999", ((Struct) result.value()).get("time"));
+        assertEquals("23:59:59.999", ((Struct) result.value()).get("time"));
 
         transform.close();
     }
@@ -264,11 +265,11 @@ public class TimeMillisToStringTransformTest {
         Map<String, String> props = new HashMap<>();
         transform.configure(props);
 
-        Assert.assertEquals("18:02:37", transform.formatMillisSinceMidnight(64957000));
-        Assert.assertEquals("00:00:00", transform.formatMillisSinceMidnight(0));
-        Assert.assertEquals("12:00:00", transform.formatMillisSinceMidnight(43200000));
-        Assert.assertEquals("23:59:59", transform.formatMillisSinceMidnight(86399000));
-        Assert.assertEquals("00:00:01", transform.formatMillisSinceMidnight(1000));
+        assertEquals("18:02:37", transform.formatMillisSinceMidnight(64957000));
+        assertEquals("00:00:00", transform.formatMillisSinceMidnight(0));
+        assertEquals("12:00:00", transform.formatMillisSinceMidnight(43200000));
+        assertEquals("23:59:59", transform.formatMillisSinceMidnight(86399000));
+        assertEquals("00:00:01", transform.formatMillisSinceMidnight(1000));
 
         transform.close();
     }
@@ -297,10 +298,10 @@ public class TimeMillisToStringTransformTest {
         SinkRecord result1 = transform.apply(createRecord(schema, value1));
         SinkRecord result2 = transform.apply(createRecord(schema, value2));
 
-        Assert.assertSame(result1.valueSchema(), result2.valueSchema());
+        assertSame(result1.valueSchema(), result2.valueSchema());
 
-        Assert.assertEquals("18:02:37", ((Struct) result1.value()).get("TMCTDR"));
-        Assert.assertEquals("12:00:00", ((Struct) result2.value()).get("TMCTDR"));
+        assertEquals("18:02:37", ((Struct) result1.value()).get("TMCTDR"));
+        assertEquals("12:00:00", ((Struct) result2.value()).get("TMCTDR"));
 
         transform.close();
     }

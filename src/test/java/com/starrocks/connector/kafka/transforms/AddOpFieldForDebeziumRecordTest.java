@@ -27,8 +27,9 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.source.SourceRecord;
-import org.junit.Assert;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -110,7 +111,7 @@ public class AddOpFieldForDebeziumRecordTest {
 
         SinkRecord originRecord = createUpdateRecord();
         SinkRecord record = transform.apply(originRecord);
-        Assert.assertEquals("0", ((Struct) ((Struct) record.value()).get("after")).get("__op").toString());
+        assertEquals("0", ((Struct) ((Struct) record.value()).get("after")).get("__op").toString());
     }
 
     @Test
@@ -121,7 +122,7 @@ public class AddOpFieldForDebeziumRecordTest {
 
         SinkRecord originRecord = createCreateRecord();
         SinkRecord record = transform.apply(originRecord);
-        Assert.assertEquals("0", ((Struct) ((Struct) record.value()).get("after")).get("__op").toString());
+        assertEquals("0", ((Struct) ((Struct) record.value()).get("after")).get("__op").toString());
     }
 
     @Test
@@ -132,6 +133,6 @@ public class AddOpFieldForDebeziumRecordTest {
 
         SinkRecord originRecord = createDeleteRecord();
         SinkRecord record = transform.apply(originRecord);
-        Assert.assertEquals("1", ((Struct) ((Struct) record.value()).get("before")).get("__op").toString());
+        assertEquals("1", ((Struct) ((Struct) record.value()).get("before")).get("__op").toString());
     }
 }

@@ -35,9 +35,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.starrocks.connector.kafka.json.DecimalFormat;
 import com.starrocks.connector.kafka.json.JsonConverter;
-import com.starrocks.connector.kafka.json.JsonConverterConfig;
 import com.starrocks.data.load.stream.StreamLoadDataFormat;
 import com.starrocks.data.load.stream.properties.StreamLoadProperties;
 import com.starrocks.data.load.stream.properties.StreamLoadTableProperties;
@@ -59,12 +57,13 @@ import com.starrocks.data.load.stream.v2.StreamLoadManagerV2;
 //    4. Partition Rebalancing: Occasionally, Connect will need to change the assignment of this task. When this happens, the currently assigned partitions will be closed with close(Collection) and the new assignment will be opened using open(Collection).
 //    5. Shutdown: When the task needs to be shutdown, Connect will close active partitions (if there are any) and stop the task using stop()
 
-public class StarRocksSinkTask extends SinkTask  {
+public class StarRocksSinkTask extends SinkTask {
 
     enum SinkType {
         CSV,
         JSON
     }
+
     private SinkType sinkType;
     private static final Logger LOG = LoggerFactory.getLogger(StarRocksSinkTask.class);
     private StreamLoadManagerV2 loadManager;
@@ -190,12 +189,7 @@ public class StarRocksSinkTask extends SinkTask  {
     }
 
     public static JsonConverter createJsonConverter() {
-        JsonConverter converter = new JsonConverter();
-        Map<String, Object> conf = new HashMap<>();
-        conf.put(JsonConverterConfig.REPLACE_NULL_WITH_DEFAULT_CONFIG, (Object) false);
-        conf.put(JsonConverterConfig.DECIMAL_FORMAT_CONFIG, DecimalFormat.NUMERIC.name());
-        converter.configure(conf, false);
-        return converter;
+        return new JsonConverter();
     }
 
     @Override
@@ -282,7 +276,7 @@ public class StarRocksSinkTask extends SinkTask  {
         if (maxRetryTimes != -1) {
             if (retryCount > maxRetryTimes) {
                 LOG.error("Starrocks Put failure " + retryCount + " times, which bigger than maxRetryTimes "
-                            + maxRetryTimes + ", sink task will be stopped");
+                        + maxRetryTimes + ", sink task will be stopped");
                 assert sdkException != null;
                 LOG.error("Error message is ", sdkException);
                 throw new RuntimeException(sdkException);
@@ -317,7 +311,7 @@ public class StarRocksSinkTask extends SinkTask  {
                 currentBufferBytes += row.getBytes().length;
             } catch (Exception writeException) {
                 LOG.error("Starrocks Put error: " + writeException.getMessage() +
-                          " topic, partition, offset is " + topic + ", " + record.kafkaPartition() + ", " + record.kafkaOffset());
+                        " topic, partition, offset is " + topic + ", " + record.kafkaPartition() + ", " + record.kafkaOffset());
                 writeException.printStackTrace();
                 occurException = true;
                 e = writeException;
@@ -327,14 +321,14 @@ public class StarRocksSinkTask extends SinkTask  {
 
         if (occurException && e != null) {
             LOG.info("Starrocks Put occurs exception, Err {} currentBufferBytes {} recordRange [{}:{}-{}:{}] cost {}ms",
-                    e.getMessage(), currentBufferBytes, 
+                    e.getMessage(), currentBufferBytes,
                     firstRecord == null ? null : firstRecord.kafkaPartition(),
                     firstRecord == null ? null : firstRecord.kafkaOffset(),
                     record == null ? null : record.kafkaPartition(),
                     record == null ? null : record.kafkaOffset(), System.currentTimeMillis() - start);
         } else {
             LOG.info("Starrocks Put success, currentBufferBytes {} recordRange [{}:{}-{}:{}] cost {}ms",
-                    currentBufferBytes, 
+                    currentBufferBytes,
                     firstRecord == null ? null : firstRecord.kafkaPartition(),
                     firstRecord == null ? null : firstRecord.kafkaOffset(),
                     record == null ? null : record.kafkaPartition(),
@@ -348,7 +342,7 @@ public class StarRocksSinkTask extends SinkTask  {
         // return previous offset when buffer size and flush interval are not reached
         if (currentBufferBytes < buffMaxbytes && System.currentTimeMillis() - lastFlushTime < bufferFlushInterval) {
             LOG.info("Starrocks skip preCommit currentBufferBytes {} less than buffMaxbytes {}"
-                    + " or SinceLastFlushTime {} less than bufferFlushInterval {}",
+                            + " or SinceLastFlushTime {} less than bufferFlushInterval {}",
                     currentBufferBytes, buffMaxbytes, System.currentTimeMillis() - lastFlushTime, bufferFlushInterval);
             return Collections.emptyMap();
         }
@@ -391,9 +385,6 @@ public class StarRocksSinkTask extends SinkTask  {
     public void stop() {
         if (loadManager != null) {
             loadManager.close();
-        }
-        if (jsonConverter != null) {
-            jsonConverter.close();
         }
         LOG.info("Starrocks sink task stopped. version is " + Util.VERSION);
     }
