@@ -62,6 +62,16 @@ public class StarRocksSinkConnectorConfig {
     // This configuration controls the number of failed retries. The default value is 3. -1 indicates unlimited retry.
     public static final String SINK_MAXRETRIES = "sink.maxretries";
 
+    // The envelope format of incoming Kafka records.
+    // Supported values: `none` (default), `debezium`.
+    // When set to `debezium`, records are expected to be in Debezium CDC envelope format
+    // and are unwrapped before being written to StarRocks.
+    public static final String ENVELOPE = "starrocks.envelope";
+
+    // Specifies whether the connector processes DELETE or tombstone events
+    // and removes the corresponding row from the database
+    public static final String DELETE_ENABLE = "starrocks.delete.enabled";
+
     public static final String[] mustRequiredConfigs = {
             STARROCKS_LOAD_URL,
             STARROCKS_DATABASE_NAME,
@@ -181,6 +191,25 @@ public class StarRocksSinkConnectorConfig {
                         0,
                         ConfigDef.Width.NONE,
                         SINK_MAXRETRIES
+                ).define(
+                        ENVELOPE, ConfigDef.Type.STRING, "none",
+                        ConfigDef.ValidString.in("none", "debezium"),
+                        ConfigDef.Importance.MEDIUM,
+                        "envelope format of incoming records; 'none' (default) or 'debezium'",
+                        CONFIG_GROUP_1,
+                        0,
+                        ConfigDef.Width.NONE, ENVELOPE
+                )
+                .define(
+                        DELETE_ENABLE, ConfigDef.Type.BOOLEAN, false,
+                        null,
+                        ConfigDef.Importance.MEDIUM,
+                        "Specifies whether the connector processes DELETE or tombstone events and " +
+                                "removes the corresponding row from the database. " +
+                                "Enable option requires target table is PRIMARY KEY table.",
+                        CONFIG_GROUP_1,
+                        0,
+                        ConfigDef.Width.NONE, DELETE_ENABLE
                 );
     }
 }

@@ -20,21 +20,9 @@
 
 package com.starrocks.connector.kafka;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
-
-import org.apache.kafka.clients.consumer.OffsetAndMetadata;
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.connect.errors.DataException;
-import org.apache.kafka.connect.sink.SinkRecord;
-import org.apache.kafka.connect.sink.SinkTask;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.fasterxml.jackson.databind.JsonNode;
+import com.starrocks.connector.kafka.envelope.DebeziumEnvelope;
+import com.starrocks.connector.kafka.envelope.NoopEnvelope;
 import com.starrocks.connector.kafka.json.DecimalFormat;
 import com.starrocks.connector.kafka.json.JsonConverter;
 import com.starrocks.connector.kafka.json.JsonConverterConfig;
@@ -42,6 +30,19 @@ import com.starrocks.data.load.stream.StreamLoadDataFormat;
 import com.starrocks.data.load.stream.properties.StreamLoadProperties;
 import com.starrocks.data.load.stream.properties.StreamLoadTableProperties;
 import com.starrocks.data.load.stream.v2.StreamLoadManagerV2;
+import io.debezium.transforms.ExtractNewRecordStateConfigDefinition.DeleteTombstoneHandling;
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.connect.errors.DataException;
+import org.apache.kafka.connect.sink.SinkRecord;
+import org.apache.kafka.connect.sink.SinkTask;
+import org.apache.kafka.connect.transforms.Transformation;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.*;
+
+import static io.debezium.transforms.ExtractNewRecordStateConfigDefinition.HANDLE_TOMBSTONE_DELETES;
 
 
 //  Please reference to: https://docs.confluent.io/platform/7.4/connect/javadocs/javadoc/org/apache/kafka/connect/sink/SinkTask.html
@@ -59,12 +60,13 @@ import com.starrocks.data.load.stream.v2.StreamLoadManagerV2;
 //    4. Partition Rebalancing: Occasionally, Connect will need to change the assignment of this task. When this happens, the currently assigned partitions will be closed with close(Collection) and the new assignment will be opened using open(Collection).
 //    5. Shutdown: When the task needs to be shutdown, Connect will close active partitions (if there are any) and stop the task using stop()
 
-public class StarRocksSinkTask extends SinkTask  {
+public class StarRocksSinkTask extends SinkTask {
 
     enum SinkType {
         CSV,
         JSON
     }
+
     private SinkType sinkType;
     private static final Logger LOG = LoggerFactory.getLogger(StarRocksSinkTask.class);
     private StreamLoadManagerV2 loadManager;
@@ -80,6 +82,7 @@ public class StarRocksSinkTask extends SinkTask  {
     private long maxRetryTimes;
     private long retryCount = 0;
     private Throwable sdkException;
+    private Transformation<SinkRecord> transformation;
 
     private long buffMaxbytes;
     private long bufferFlushInterval;
@@ -207,6 +210,18 @@ public class StarRocksSinkTask extends SinkTask  {
         topic2Table = getTopicToTableMap(props);
         jsonConverter = createJsonConverter();
         maxRetryTimes = Long.parseLong(props.getOrDefault(StarRocksSinkConnectorConfig.SINK_MAXRETRIES, "3"));
+        transformation = new NoopEnvelope<>();
+        String envelope = props.getOrDefault(StarRocksSinkConnectorConfig.ENVELOPE, "none").toLowerCase();
+        String deleteEnabled = props.getOrDefault(StarRocksSinkConnectorConfig.DELETE_ENABLE, "false").toLowerCase();
+        if ("debezium".equals(envelope)) {
+            transformation = new DebeziumEnvelope<>();
+            if (deleteEnabled.equals("true")) {
+                props.put(HANDLE_TOMBSTONE_DELETES.name(), DeleteTombstoneHandling.REWRITE.getValue());
+            } else {
+                props.put(HANDLE_TOMBSTONE_DELETES.name(), DeleteTombstoneHandling.DROP.getValue());
+            }
+            transformation.configure(props);
+        }
         LOG.info("Starrocks sink task started. version is " + Util.VERSION);
     }
 
@@ -282,7 +297,7 @@ public class StarRocksSinkTask extends SinkTask  {
         if (maxRetryTimes != -1) {
             if (retryCount > maxRetryTimes) {
                 LOG.error("Starrocks Put failure " + retryCount + " times, which bigger than maxRetryTimes "
-                            + maxRetryTimes + ", sink task will be stopped");
+                        + maxRetryTimes + ", sink task will be stopped");
                 assert sdkException != null;
                 LOG.error("Error message is ", sdkException);
                 throw new RuntimeException(sdkException);
@@ -299,6 +314,12 @@ public class StarRocksSinkTask extends SinkTask  {
                 firstRecord = record;
             }
             LOG.debug("Received record: " + record.toString());
+
+            record = transformation.apply(record);
+            if (record == null) {
+                LOG.debug("Record filtered out by transformation");
+                continue;
+            }
 
             String topic = record.topic();
             // The sdk does not provide the ability to clean up exceptions, that is to say, according to the current implementation of the SDK,
@@ -317,7 +338,7 @@ public class StarRocksSinkTask extends SinkTask  {
                 currentBufferBytes += row.getBytes().length;
             } catch (Exception writeException) {
                 LOG.error("Starrocks Put error: " + writeException.getMessage() +
-                          " topic, partition, offset is " + topic + ", " + record.kafkaPartition() + ", " + record.kafkaOffset());
+                        " topic, partition, offset is " + topic + ", " + record.kafkaPartition() + ", " + record.kafkaOffset());
                 writeException.printStackTrace();
                 occurException = true;
                 e = writeException;
@@ -327,14 +348,14 @@ public class StarRocksSinkTask extends SinkTask  {
 
         if (occurException && e != null) {
             LOG.info("Starrocks Put occurs exception, Err {} currentBufferBytes {} recordRange [{}:{}-{}:{}] cost {}ms",
-                    e.getMessage(), currentBufferBytes, 
+                    e.getMessage(), currentBufferBytes,
                     firstRecord == null ? null : firstRecord.kafkaPartition(),
                     firstRecord == null ? null : firstRecord.kafkaOffset(),
                     record == null ? null : record.kafkaPartition(),
                     record == null ? null : record.kafkaOffset(), System.currentTimeMillis() - start);
         } else {
             LOG.info("Starrocks Put success, currentBufferBytes {} recordRange [{}:{}-{}:{}] cost {}ms",
-                    currentBufferBytes, 
+                    currentBufferBytes,
                     firstRecord == null ? null : firstRecord.kafkaPartition(),
                     firstRecord == null ? null : firstRecord.kafkaOffset(),
                     record == null ? null : record.kafkaPartition(),
@@ -348,7 +369,7 @@ public class StarRocksSinkTask extends SinkTask  {
         // return previous offset when buffer size and flush interval are not reached
         if (currentBufferBytes < buffMaxbytes && System.currentTimeMillis() - lastFlushTime < bufferFlushInterval) {
             LOG.info("Starrocks skip preCommit currentBufferBytes {} less than buffMaxbytes {}"
-                    + " or SinceLastFlushTime {} less than bufferFlushInterval {}",
+                            + " or SinceLastFlushTime {} less than bufferFlushInterval {}",
                     currentBufferBytes, buffMaxbytes, System.currentTimeMillis() - lastFlushTime, bufferFlushInterval);
             return Collections.emptyMap();
         }
