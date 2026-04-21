@@ -19,6 +19,8 @@
  */
 
 package com.starrocks.connector.kafka;
+
+import com.starrocks.connector.kafka.StarRocksSinkConfig.SinkFormat;
 import com.starrocks.connector.kafka.json.JsonConverter;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaAndValue;
@@ -67,37 +69,38 @@ public class StarRocksSinkTaskTest {
     }
 
     @Test
-    public void testGetRecordFromSinkRecord() {
+    public void testGetRowFromSinkRecord() {
         StarRocksSinkTask sinkTask = new StarRocksSinkTask();
         {
-            sinkTask.setSinkType(StarRocksSinkTask.SinkType.CSV);
+            sinkTask.setSinkType(SinkFormat.CSV);
             SinkRecord sinkRecord = null;
-            String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
+            String row = sinkTask.getRowFromSinkRecord(sinkRecord);
             Assert.assertEquals(null, row);
         }
 
         {
-            sinkTask.setSinkType(StarRocksSinkTask.SinkType.CSV);
+            sinkTask.setSinkType(SinkFormat.CSV);
             SinkRecord sinkRecord = new SinkRecord("dummy-topic", 0, null, null, null, null, 0);
-            String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
+            String row = sinkTask.getRowFromSinkRecord(sinkRecord);
             Assert.assertEquals(null, row);
         }
 
         {
-            sinkTask.setSinkType(StarRocksSinkTask.SinkType.CSV);
+            sinkTask.setSinkType(SinkFormat.CSV);
             SinkRecord sinkRecord = new SinkRecord("dummy-topic", 0, null, null, null, "a,b,c", 0);
-            String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
+            String row = sinkTask.getRowFromSinkRecord(sinkRecord);
             Assert.assertEquals("a,b,c", row);
         }
 
         {
-            class Dummy {}
+            class Dummy {
+            }
             Dummy dummy = new Dummy();
-            sinkTask.setSinkType(StarRocksSinkTask.SinkType.CSV);
+            sinkTask.setSinkType(SinkFormat.CSV);
             SinkRecord sinkRecord = new SinkRecord("dummy-topic", 0, null, null, null, dummy, 0);
             String errMsg = "";
             try {
-                String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
+                String row = sinkTask.getRowFromSinkRecord(sinkRecord);
             } catch (DataException e) {
                 errMsg = e.getMessage();
             }
@@ -105,35 +108,35 @@ public class StarRocksSinkTaskTest {
         }
 
         {
-            sinkTask.setSinkType(StarRocksSinkTask.SinkType.JSON);
+            sinkTask.setSinkType(SinkFormat.JSON);
             SinkRecord sinkRecord = null;
-            String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
+            String row = sinkTask.getRowFromSinkRecord(sinkRecord);
             Assert.assertEquals(null, row);
         }
 
         {
-            sinkTask.setSinkType(StarRocksSinkTask.SinkType.JSON);
+            sinkTask.setSinkType(SinkFormat.JSON);
             SinkRecord sinkRecord = new SinkRecord("dummy-topic", 0, null, null, null, null, 0);
-            String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
+            String row = sinkTask.getRowFromSinkRecord(sinkRecord);
             Assert.assertEquals(null, row);
         }
 
         {
             JsonConverter jsonConverter = StarRocksSinkTask.createJsonConverter();
             sinkTask.setJsonConverter(jsonConverter);
-            sinkTask.setSinkType(StarRocksSinkTask.SinkType.JSON);
+            sinkTask.setSinkType(SinkFormat.JSON);
             String value = "{\"name\":\"北京\",\"code\":1}";
             SinkRecord sinkRecord = new SinkRecord("dummy-topic", 0, null, null, null, value, 0);
-            String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
+            String row = sinkTask.getRowFromSinkRecord(sinkRecord);
             Assert.assertEquals("\"{\\\"name\\\":\\\"北京\\\",\\\"code\\\":1}\"", row);
         }
 
         {
             JsonConverter jsonConverter = StarRocksSinkTask.createJsonConverter();
             sinkTask.setJsonConverter(jsonConverter);
-            sinkTask.setSinkType(StarRocksSinkTask.SinkType.JSON);
+            sinkTask.setSinkType(SinkFormat.JSON);
             SinkRecord sinkRecord = createCreateRecord();
-            String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
+            String row = sinkTask.getRowFromSinkRecord(sinkRecord);
             Assert.assertEquals("{\"id\":1,\"name\":\"myRecord\"}", row);
         }
     }
@@ -148,8 +151,8 @@ public class StarRocksSinkTaskTest {
         StarRocksSinkTask sinkTask = new StarRocksSinkTask();
         JsonConverter jsonConverter = StarRocksSinkTask.createJsonConverter();
         sinkTask.setJsonConverter(jsonConverter);
-        sinkTask.setSinkType(StarRocksSinkTask.SinkType.JSON);
-        String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
+        sinkTask.setSinkType(SinkFormat.JSON);
+        String row = sinkTask.getRowFromSinkRecord(sinkRecord);
         Assert.assertEquals("1.56", row);
     }
 
@@ -158,12 +161,12 @@ public class StarRocksSinkTaskTest {
         StarRocksSinkTask sinkTask = new StarRocksSinkTask();
         JsonConverter jsonConverter = StarRocksSinkTask.createJsonConverter();
         sinkTask.setJsonConverter(jsonConverter);
-        sinkTask.setSinkType(StarRocksSinkTask.SinkType.JSON);
+        sinkTask.setSinkType(SinkFormat.JSON);
         final Struct value = new Struct(recordSchema);
         value.put("id", (byte) 1);
         value.put("name", null);
         SinkRecord sinkRecord = new SinkRecord(TOPIC, 0, null, null, recordSchema, value, 0);
-        String row = sinkTask.getRecordFromSinkRecord(sinkRecord);
+        String row = sinkTask.getRowFromSinkRecord(sinkRecord);
         Assert.assertEquals("{\"id\":1,\"name\":null}", row);
     }
 }
