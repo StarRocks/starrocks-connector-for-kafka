@@ -21,6 +21,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.debezium.data.SpecialValueDecimal;
+import io.debezium.data.VariableScaleDecimal;
 import org.apache.kafka.common.cache.Cache;
 import org.apache.kafka.common.cache.LRUCache;
 import org.apache.kafka.common.cache.SynchronizedCache;
@@ -159,6 +161,31 @@ public class JsonConverter implements Converter, HeaderConverter {
                 }
 
                 throw new DataException("Invalid type for Decimal, underlying representation should be numeric or bytes but was " + value.getNodeType());
+            }
+        });
+
+        // Debezium's variable-scale decimal (used for unconstrained numeric columns, e.g. Postgres
+        // `numeric` with no declared precision/scale). It is a Struct{scale: int32, value: bytes}, not
+        // the standard org.apache.kafka.connect.data.Decimal logical type, so it needs its own converter
+        // or it falls through to the generic STRUCT case and gets serialized as a nested JSON object
+        // instead of a scalar - which StarRocks cannot load into a DECIMAL column.
+        LOGICAL_CONVERTERS.put(VariableScaleDecimal.LOGICAL_NAME, new LogicalTypeConverter() {
+            @Override
+            public JsonNode toJson(final Schema schema, final Object value, final JsonConverterConfig config) {
+                if (!(value instanceof Struct))
+                    throw new DataException("Invalid type for VariableScaleDecimal, expected Struct but was " + value.getClass());
+
+                SpecialValueDecimal specialValueDecimal = VariableScaleDecimal.toLogical((Struct) value);
+                Optional<BigDecimal> decimalValue = specialValueDecimal.getDecimalValue();
+                // NaN / +Infinity / -Infinity (possible for e.g. Postgres numeric) have no BigDecimal form.
+                return decimalValue.isPresent()
+                        ? JSON_NODE_FACTORY.numberNode(decimalValue.get())
+                        : JSON_NODE_FACTORY.textNode(specialValueDecimal.toString());
+            }
+
+            @Override
+            public Object toConnect(final Schema schema, final JsonNode value) {
+                throw new DataException("VariableScaleDecimal does not support JSON -> Connect conversion");
             }
         });
 
