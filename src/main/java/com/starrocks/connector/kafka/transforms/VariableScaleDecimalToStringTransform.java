@@ -20,8 +20,10 @@
 
 package com.starrocks.connector.kafka.transforms;
 
+import io.debezium.config.Configuration;
 import io.debezium.data.SpecialValueDecimal;
 import io.debezium.data.VariableScaleDecimal;
+import io.debezium.transforms.SmtManager;
 import org.apache.kafka.common.cache.Cache;
 import org.apache.kafka.common.cache.LRUCache;
 import org.apache.kafka.common.cache.SynchronizedCache;
@@ -63,25 +65,37 @@ import java.util.Set;
 // scale for every value using it. A string retains the exact value regardless of scale, and StarRocks
 // Stream Load already accepts string-formatted numbers for numeric columns.
 //
-// Configuration example:
-// transforms=vsdconv
+// This transform works whether it runs before or after Debezium's unwrap (ExtractNewRecordState):
+// if the record is still a raw CDC envelope (op/before/after/source), it converts fields inside
+// `before` and `after` directly, the same way AddOpFieldForDebeziumRecord reaches into those two
+// positions; otherwise it treats the record as already-flat and inspects its top-level fields. It does
+// not recurse into arbitrarily nested structs/arrays/maps beyond that one documented envelope shape.
+//
+// Configuration example (order relative to unwrap does not matter):
+// transforms=vsdconv,unwrap
 // transforms.vsdconv.type=com.starrocks.connector.kafka.transforms.VariableScaleDecimalToStringTransform
+// transforms.unwrap.type=io.debezium.transforms.ExtractNewRecordState
 public class VariableScaleDecimalToStringTransform<R extends ConnectRecord<R>> implements Transformation<R> {
 
     private static final Logger LOG = LoggerFactory.getLogger(VariableScaleDecimalToStringTransform.class);
 
     private static final String FIELDS_CONFIG = "fields";
+    private static final String BEFORE = "before";
+    private static final String AFTER = "after";
 
     public static final ConfigDef CONFIG_DEF = new ConfigDef()
             .define(FIELDS_CONFIG,
                     ConfigDef.Type.STRING,
                     "",
                     ConfigDef.Importance.MEDIUM,
-                    "Comma-separated list of field names to convert. "
-                            + "If empty, all fields with the io.debezium.data.VariableScaleDecimal logical type are converted.");
+                    "Comma-separated list of field names to restrict conversion to. A field must still carry "
+                            + "the io.debezium.data.VariableScaleDecimal logical type to be converted - a same-named "
+                            + "field of a different type is left unchanged. If empty, all fields with that logical "
+                            + "type are converted.");
 
     private Set<String> targetFields;
     private Cache<Schema, Schema> schemaUpdateCache;
+    private SmtManager<R> smtManager;
 
     @Override
     public R apply(R record) {
@@ -92,9 +106,13 @@ public class VariableScaleDecimalToStringTransform<R extends ConnectRecord<R>> i
             return record;
         }
 
-        Schema schema = record.valueSchema();
-        Struct value = (Struct) record.value();
+        if (smtManager.isValidEnvelope(record)) {
+            return applyToEnvelope(record);
+        }
+        return applyToRow(record, record.valueSchema(), (Struct) record.value());
+    }
 
+    private R applyToRow(R record, Schema schema, Struct value) {
         if (!hasTargetFields(schema)) {
             return record;
         }
@@ -113,11 +131,92 @@ public class VariableScaleDecimalToStringTransform<R extends ConnectRecord<R>> i
         );
     }
 
+    // A still-enveloped record (op/before/after/source) carries the actual row fields nested inside
+    // `before` and `after`, not at the top level - convert each independently, since e.g. a delete
+    // event has a populated `before` and a null `after`.
+    private R applyToEnvelope(R record) {
+        Schema envelopeSchema = record.valueSchema();
+        Struct envelopeValue = (Struct) record.value();
+
+        Field beforeField = envelopeSchema.field(BEFORE);
+        Field afterField = envelopeSchema.field(AFTER);
+
+        Schema beforeRowSchema = beforeField != null ? beforeField.schema() : null;
+        Schema afterRowSchema = afterField != null ? afterField.schema() : null;
+
+        boolean beforeNeedsConversion = beforeRowSchema != null && hasTargetFields(beforeRowSchema);
+        boolean afterNeedsConversion = afterRowSchema != null && hasTargetFields(afterRowSchema);
+
+        if (!beforeNeedsConversion && !afterNeedsConversion) {
+            return record;
+        }
+
+        Schema updatedBeforeRowSchema = beforeNeedsConversion ? getOrBuildSchema(beforeRowSchema) : beforeRowSchema;
+        Schema updatedAfterRowSchema = afterNeedsConversion ? getOrBuildSchema(afterRowSchema) : afterRowSchema;
+
+        Schema updatedEnvelopeSchema = getOrBuildEnvelopeSchema(envelopeSchema, updatedBeforeRowSchema, updatedAfterRowSchema);
+        Struct updatedEnvelopeValue = new Struct(updatedEnvelopeSchema);
+
+        for (Field field : envelopeSchema.fields()) {
+            Object rawValue = envelopeValue.get(field);
+            if (field.name().equals(BEFORE) && beforeNeedsConversion && rawValue != null) {
+                updatedEnvelopeValue.put(BEFORE, buildUpdatedValue(beforeRowSchema, updatedBeforeRowSchema, (Struct) rawValue));
+            } else if (field.name().equals(AFTER) && afterNeedsConversion && rawValue != null) {
+                updatedEnvelopeValue.put(AFTER, buildUpdatedValue(afterRowSchema, updatedAfterRowSchema, (Struct) rawValue));
+            } else {
+                updatedEnvelopeValue.put(field.name(), rawValue);
+            }
+        }
+
+        return record.newRecord(
+                record.topic(),
+                record.kafkaPartition(),
+                record.keySchema(),
+                record.key(),
+                updatedEnvelopeSchema,
+                updatedEnvelopeValue,
+                record.timestamp()
+        );
+    }
+
+    private Schema getOrBuildEnvelopeSchema(Schema envelopeSchema, Schema updatedBeforeRowSchema, Schema updatedAfterRowSchema) {
+        Schema cached = schemaUpdateCache.get(envelopeSchema);
+        if (cached != null) {
+            return cached;
+        }
+
+        SchemaBuilder builder = SchemaUtil.copySchemaBasics(envelopeSchema, SchemaBuilder.struct());
+        if (envelopeSchema.isOptional()) {
+            builder.optional();
+        }
+        for (Field field : envelopeSchema.fields()) {
+            if (field.name().equals(BEFORE)) {
+                builder.field(BEFORE, updatedBeforeRowSchema);
+            } else if (field.name().equals(AFTER)) {
+                builder.field(AFTER, updatedAfterRowSchema);
+            } else {
+                builder.field(field.name(), field.schema());
+            }
+        }
+
+        Schema updatedEnvelopeSchema = builder.build();
+        schemaUpdateCache.put(envelopeSchema, updatedEnvelopeSchema);
+        return updatedEnvelopeSchema;
+    }
+
     private boolean shouldConvertField(Field field) {
+        // `fields` narrows which VariableScaleDecimal fields get converted - it must never widen
+        // conversion to a same-named field of a different type. On a connector consuming multiple
+        // topics, a field name is not unique across schemas: a plain string, a fixed-scale Decimal,
+        // or any other type sharing this field's name would otherwise be coerced to a string and
+        // then fail in toDecimalString(), which requires an actual VariableScaleDecimal Struct.
+        if (!isVariableScaleDecimal(field.schema())) {
+            return false;
+        }
         if (!targetFields.isEmpty()) {
             return targetFields.contains(field.name());
         }
-        return isVariableScaleDecimal(field.schema());
+        return true;
     }
 
     private boolean isVariableScaleDecimal(Schema schema) {
@@ -140,6 +239,12 @@ public class VariableScaleDecimalToStringTransform<R extends ConnectRecord<R>> i
         }
 
         SchemaBuilder builder = SchemaUtil.copySchemaBasics(originalSchema, SchemaBuilder.struct());
+        // copySchemaBasics does not propagate the schema's own optional flag (only field-level
+        // optionality is handled below) - without this, a nullable row schema (e.g. the row type
+        // Debezium's before/after envelope fields reference) would silently become non-nullable here.
+        if (originalSchema.isOptional()) {
+            builder.optional();
+        }
         for (Field field : originalSchema.fields()) {
             if (shouldConvertField(field)) {
                 if (field.schema().isOptional()) {
@@ -204,6 +309,7 @@ public class VariableScaleDecimalToStringTransform<R extends ConnectRecord<R>> i
         }
 
         schemaUpdateCache = new SynchronizedCache<>(new LRUCache<Schema, Schema>(16));
+        smtManager = new SmtManager<>(Configuration.from(configs));
 
         LOG.info("VariableScaleDecimalToStringTransform configured: fields={}",
                 targetFields.isEmpty() ? "(auto-detect VariableScaleDecimal fields)" : targetFields);

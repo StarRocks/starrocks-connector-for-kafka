@@ -20,6 +20,7 @@
 
 package com.starrocks.connector.kafka.transforms;
 
+import io.debezium.data.Envelope;
 import io.debezium.data.SpecialValueDecimal;
 import io.debezium.data.VariableScaleDecimal;
 import org.apache.kafka.connect.data.Schema;
@@ -30,6 +31,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -93,6 +95,34 @@ public class VariableScaleDecimalToStringTransformTest {
         Struct resultValue = (Struct) result.value();
 
         Assert.assertEquals("-987.654321", resultValue.get(FIELD_NAME));
+
+        transform.close();
+    }
+
+    @Test
+    public void testExplicitFieldNameDoesNotCoerceSameNamedDifferentType() {
+        // A connector consuming multiple topics can see the same field name mean different things
+        // on different schemas. `fields` must narrow which VariableScaleDecimal fields are converted,
+        // not force conversion of any field sharing that name regardless of its actual type.
+        VariableScaleDecimalToStringTransform<SinkRecord> transform = new VariableScaleDecimalToStringTransform<>();
+        Map<String, String> props = new HashMap<>();
+        props.put("fields", FIELD_NAME);
+        transform.configure(props);
+
+        Schema schema = SchemaBuilder.struct()
+                .name("test.OtherValue")
+                .field("id", Schema.INT32_SCHEMA)
+                .field(FIELD_NAME, Schema.STRING_SCHEMA)
+                .build();
+        Struct value = new Struct(schema);
+        value.put("id", 1);
+        value.put(FIELD_NAME, "not-a-variable-scale-decimal");
+
+        SinkRecord record = createRecord(schema, value);
+        SinkRecord result = transform.apply(record);
+
+        Assert.assertSame(record, result);
+        Assert.assertEquals("not-a-variable-scale-decimal", ((Struct) result.value()).get(FIELD_NAME));
 
         transform.close();
     }
@@ -235,4 +265,141 @@ public class VariableScaleDecimalToStringTransformTest {
 
         transform.close();
     }
+
+    // --- Records still in the raw Debezium envelope (op/before/after/source), i.e. this transform
+    // placed *before* Debezium's unwrap (ExtractNewRecordState) - see the repository's documented
+    // "transforms=addfield,unwrap" ordering in AddOpFieldForDebeziumRecord for the same shape. ---
+
+    private final Schema sourceSchema = SchemaBuilder.struct().field("lsn", SchemaBuilder.int32()).build();
+
+    // Debezium declares before/after as nullable (a create event has before=null, a delete event has
+    // after=null), so the row schema handed to the envelope must itself be optional - matching a real
+    // production schema - or Struct.put() will (correctly) reject a null before/after value.
+    private Schema buildOptionalRowSchema() {
+        return SchemaBuilder.struct()
+                .name("test.Value")
+                .optional()
+                .field("id", Schema.INT32_SCHEMA)
+                .field("name", Schema.STRING_SCHEMA)
+                .field(FIELD_NAME, VariableScaleDecimal.optionalSchema())
+                .build();
+    }
+
+    private Envelope buildEnvelope(Schema rowSchema) {
+        return Envelope.defineSchema()
+                .withName("dummy.Envelope")
+                .withRecord(rowSchema)
+                .withSource(sourceSchema)
+                .build();
+    }
+
+    private Struct rowStruct(Schema rowSchema, int id, String name, BigDecimal decimal) {
+        Struct row = new Struct(rowSchema);
+        row.put("id", id);
+        row.put("name", name);
+        row.put(FIELD_NAME, decimal == null ? null : vsdValue(decimal));
+        return row;
+    }
+
+    @Test
+    public void testEnvelopeCreateEventConvertsAfterOnly() {
+        VariableScaleDecimalToStringTransform<SinkRecord> transform = new VariableScaleDecimalToStringTransform<>();
+        transform.configure(new HashMap<>());
+
+        Schema rowSchema = buildOptionalRowSchema();
+        Envelope envelope = buildEnvelope(rowSchema);
+        Struct source = new Struct(sourceSchema);
+        source.put("lsn", 1);
+        Struct after = rowStruct(rowSchema, 1, "test", new BigDecimal("1234.5678"));
+        Struct payload = envelope.create(after, source, Instant.now());
+
+        SinkRecord result = transform.apply(new SinkRecord("test-topic", 0, null, null, envelope.schema(), payload, 0));
+        Struct resultValue = (Struct) result.value();
+
+        Struct resultAfter = (Struct) resultValue.get(AFTER_FIELD);
+        Assert.assertEquals("1234.5678", resultAfter.get(FIELD_NAME));
+        Assert.assertEquals(Schema.Type.STRING, resultAfter.schema().field(FIELD_NAME).schema().type());
+        Assert.assertNull(resultValue.get(BEFORE_FIELD));
+
+        transform.close();
+    }
+
+    @Test
+    public void testEnvelopeUpdateEventConvertsBeforeAndAfter() {
+        VariableScaleDecimalToStringTransform<SinkRecord> transform = new VariableScaleDecimalToStringTransform<>();
+        transform.configure(new HashMap<>());
+
+        Schema rowSchema = buildOptionalRowSchema();
+        Envelope envelope = buildEnvelope(rowSchema);
+        Struct source = new Struct(sourceSchema);
+        source.put("lsn", 1);
+        Struct before = rowStruct(rowSchema, 1, "test", new BigDecimal("100.00"));
+        Struct after = rowStruct(rowSchema, 1, "test", new BigDecimal("1235.00"));
+        Struct payload = envelope.update(before, after, source, Instant.now());
+
+        SinkRecord result = transform.apply(new SinkRecord("test-topic", 0, null, null, envelope.schema(), payload, 0));
+        Struct resultValue = (Struct) result.value();
+
+        Assert.assertEquals("100.00", ((Struct) resultValue.get(BEFORE_FIELD)).get(FIELD_NAME));
+        // Also confirms trailing-zero scale survives the envelope path, not just the flat path.
+        Assert.assertEquals("1235.00", ((Struct) resultValue.get(AFTER_FIELD)).get(FIELD_NAME));
+
+        transform.close();
+    }
+
+    @Test
+    public void testEnvelopeDeleteEventConvertsBeforeOnly() {
+        VariableScaleDecimalToStringTransform<SinkRecord> transform = new VariableScaleDecimalToStringTransform<>();
+        transform.configure(new HashMap<>());
+
+        Schema rowSchema = buildOptionalRowSchema();
+        Envelope envelope = buildEnvelope(rowSchema);
+        Struct source = new Struct(sourceSchema);
+        source.put("lsn", 1);
+        Struct before = rowStruct(rowSchema, 1, "test", new BigDecimal("-987.654321"));
+        Struct payload = envelope.delete(before, source, Instant.now());
+
+        SinkRecord result = transform.apply(new SinkRecord("test-topic", 0, null, null, envelope.schema(), payload, 0));
+        Struct resultValue = (Struct) result.value();
+
+        Assert.assertEquals("-987.654321", ((Struct) resultValue.get(BEFORE_FIELD)).get(FIELD_NAME));
+        Assert.assertNull(resultValue.get(AFTER_FIELD));
+
+        transform.close();
+    }
+
+    @Test
+    public void testEnvelopeWithoutTargetFieldPassesThrough() {
+        VariableScaleDecimalToStringTransform<SinkRecord> transform = new VariableScaleDecimalToStringTransform<>();
+        transform.configure(new HashMap<>());
+
+        Schema plainRowSchema = SchemaBuilder.struct()
+                .name("test.PlainValue")
+                .optional()
+                .field("id", Schema.INT32_SCHEMA)
+                .field("name", Schema.STRING_SCHEMA)
+                .build();
+        Envelope envelope = Envelope.defineSchema()
+                .withName("dummy.PlainEnvelope")
+                .withRecord(plainRowSchema)
+                .withSource(sourceSchema)
+                .build();
+
+        Struct source = new Struct(sourceSchema);
+        source.put("lsn", 1);
+        Struct after = new Struct(plainRowSchema);
+        after.put("id", 1);
+        after.put("name", "test");
+        Struct payload = envelope.create(after, source, Instant.now());
+
+        SinkRecord record = new SinkRecord("test-topic", 0, null, null, envelope.schema(), payload, 0);
+        SinkRecord result = transform.apply(record);
+
+        Assert.assertSame(record, result);
+
+        transform.close();
+    }
+
+    private static final String BEFORE_FIELD = "before";
+    private static final String AFTER_FIELD = "after";
 }
