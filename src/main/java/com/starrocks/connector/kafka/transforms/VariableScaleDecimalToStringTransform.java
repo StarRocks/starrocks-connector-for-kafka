@@ -127,7 +127,8 @@ public class VariableScaleDecimalToStringTransform<R extends ConnectRecord<R>> i
                 record.key(),
                 updatedSchema,
                 updatedValue,
-                record.timestamp()
+                record.timestamp(),
+                record.headers()
         );
     }
 
@@ -175,7 +176,8 @@ public class VariableScaleDecimalToStringTransform<R extends ConnectRecord<R>> i
                 record.key(),
                 updatedEnvelopeSchema,
                 updatedEnvelopeValue,
-                record.timestamp()
+                record.timestamp(),
+                record.headers()
         );
     }
 

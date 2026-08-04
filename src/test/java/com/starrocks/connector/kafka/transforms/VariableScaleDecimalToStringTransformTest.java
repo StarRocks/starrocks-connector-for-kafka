@@ -23,9 +23,12 @@ package com.starrocks.connector.kafka.transforms;
 import io.debezium.data.Envelope;
 import io.debezium.data.SpecialValueDecimal;
 import io.debezium.data.VariableScaleDecimal;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
+import org.apache.kafka.connect.header.ConnectHeaders;
+import org.apache.kafka.connect.header.Headers;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.junit.Assert;
 import org.junit.Test;
@@ -56,6 +59,11 @@ public class VariableScaleDecimalToStringTransformTest {
         return new SinkRecord("test-topic", 0, null, null, schema, value, 0);
     }
 
+    private SinkRecord createRecordWithHeaders(Schema schema, Struct value, Headers headers) {
+        return new SinkRecord("test-topic", 0, null, null, schema, value, 0,
+                null, TimestampType.NO_TIMESTAMP_TYPE, headers);
+    }
+
     @Test
     public void testAutoDetectConvertsToString() {
         VariableScaleDecimalToStringTransform<SinkRecord> transform = new VariableScaleDecimalToStringTransform<>();
@@ -74,6 +82,26 @@ public class VariableScaleDecimalToStringTransformTest {
         Assert.assertEquals(Schema.Type.STRING, result.valueSchema().field(FIELD_NAME).schema().type());
         Assert.assertEquals(1, resultValue.get("id"));
         Assert.assertEquals("test", resultValue.get("name"));
+
+        transform.close();
+    }
+
+    @Test
+    public void testFlatRecordPreservesHeaders() {
+        VariableScaleDecimalToStringTransform<SinkRecord> transform = new VariableScaleDecimalToStringTransform<>();
+        transform.configure(new HashMap<>());
+
+        Schema schema = buildSchemaWithVsdField();
+        Struct value = new Struct(schema);
+        value.put("id", 1);
+        value.put("name", "test");
+        value.put(FIELD_NAME, vsdValue(new BigDecimal("1234.5678")));
+
+        Headers headers = new ConnectHeaders().addString("trace-id", "abc-123");
+        SinkRecord result = transform.apply(createRecordWithHeaders(schema, value, headers));
+
+        Assert.assertEquals(1, result.headers().size());
+        Assert.assertEquals("abc-123", result.headers().lastWithName("trace-id").value());
 
         transform.close();
     }
@@ -320,6 +348,28 @@ public class VariableScaleDecimalToStringTransformTest {
         Assert.assertEquals("1234.5678", resultAfter.get(FIELD_NAME));
         Assert.assertEquals(Schema.Type.STRING, resultAfter.schema().field(FIELD_NAME).schema().type());
         Assert.assertNull(resultValue.get(BEFORE_FIELD));
+
+        transform.close();
+    }
+
+    @Test
+    public void testEnvelopeRecordPreservesHeaders() {
+        VariableScaleDecimalToStringTransform<SinkRecord> transform = new VariableScaleDecimalToStringTransform<>();
+        transform.configure(new HashMap<>());
+
+        Schema rowSchema = buildOptionalRowSchema();
+        Envelope envelope = buildEnvelope(rowSchema);
+        Struct source = new Struct(sourceSchema);
+        source.put("lsn", 1);
+        Struct after = rowStruct(rowSchema, 1, "test", new BigDecimal("1234.5678"));
+        Struct payload = envelope.create(after, source, Instant.now());
+
+        Headers headers = new ConnectHeaders().addString("trace-id", "abc-123");
+        SinkRecord record = createRecordWithHeaders(envelope.schema(), payload, headers);
+        SinkRecord result = transform.apply(record);
+
+        Assert.assertEquals(1, result.headers().size());
+        Assert.assertEquals("abc-123", result.headers().lastWithName("trace-id").value());
 
         transform.close();
     }
