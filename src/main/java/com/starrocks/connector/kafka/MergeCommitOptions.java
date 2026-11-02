@@ -235,7 +235,8 @@ public class MergeCommitOptions {
         }
     }
 
-    static boolean sdkKeepsDataAtRequestLimit() {
+    // Whether the stream load SDK that the connector runs with has the fix, so that a request limit is accepted.
+    public static boolean sdkKeepsDataAtRequestLimit() {
         return SDK_KEEPS_DATA_AT_REQUEST_LIMIT;
     }
 

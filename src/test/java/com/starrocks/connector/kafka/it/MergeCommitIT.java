@@ -174,16 +174,31 @@ public class MergeCommitIT extends StarRocksITBase {
         }
     }
 
+    // A request limit needs an SDK with starrocks-connector-for-apache-flink#528. Without it, the task does not
+    // start. With it, the task sends the requests of a table one at a time and every row arrives.
     @Test
-    public void testRequestLimitIsRejected() throws Exception {
+    public void testRequestLimit() throws Exception {
         String table = createTable("limit", DDL);
         Map<String, String> props = props(Mode.MERGE_COMMIT, table, table);
-        props.put(MergeCommitOptions.MAX_CONCURRENT_REQUESTS, "0");
-        try {
-            startTask(props);
-            Assert.fail("A request limit should be rejected");
-        } catch (ConfigException e) {
-            Assert.assertTrue(e.getMessage(), e.getMessage().contains(MergeCommitOptions.MAX_CONCURRENT_REQUESTS));
+        props.put(MergeCommitOptions.MAX_CONCURRENT_REQUESTS, "1");
+        if (!MergeCommitOptions.sdkKeepsDataAtRequestLimit()) {
+            try {
+                startTask(props);
+                Assert.fail("A request limit should be rejected without the SDK fix");
+            } catch (ConfigException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains(MergeCommitOptions.MAX_CONCURRENT_REQUESTS));
+            }
+            return;
         }
+        StarRocksSinkTask task = startTask(props);
+        // Keep putting while a request is in flight, so that the flush timer fires while the table is at its
+        // limit, which is when an SDK without the fix drops the chunk.
+        for (long first = 0; first < 20000; first += 500) {
+            task.put(records(table, first, 500));
+            Thread.sleep(100);
+        }
+        flush(task, props);
+        Assert.assertEquals(20000, count(table));
+        Assert.assertFalse(mergeCommitLabels(table).isEmpty());
     }
 }
