@@ -450,6 +450,91 @@ public class VariableScaleDecimalToStringTransformTest {
         transform.close();
     }
 
+    private Schema buildEnvelopeSchema(Schema beforeSchema, Schema afterSchema) {
+        return SchemaBuilder.struct()
+                .name("test.Mixed.Envelope")
+                .field(BEFORE_FIELD, beforeSchema)
+                .field(AFTER_FIELD, afterSchema)
+                .field("source", sourceSchema)
+                .field("op", Schema.STRING_SCHEMA)
+                .build();
+    }
+
+    @Test
+    public void testMongoDbStringEnvelopeEventsPassThrough() {
+        VariableScaleDecimalToStringTransform<SinkRecord> transform = new VariableScaleDecimalToStringTransform<>();
+        transform.configure(new HashMap<>());
+
+        Schema schema = buildEnvelopeSchema(Schema.OPTIONAL_STRING_SCHEMA, Schema.OPTIONAL_STRING_SCHEMA);
+        Assert.assertTrue(Envelope.isEnvelopeSchema(schema));
+        String before = "{\"_id\":1,\"name\":\"before\"}";
+        String after = "{\"_id\":1,\"name\":\"after\"}";
+        String[][] events = {{"c", null, after}, {"u", before, after}, {"d", before, null}};
+
+        for (String[] event : events) {
+            Struct payload = new Struct(schema)
+                    .put("op", event[0])
+                    .put(BEFORE_FIELD, event[1])
+                    .put(AFTER_FIELD, event[2])
+                    .put("source", new Struct(sourceSchema).put("lsn", 1));
+            SinkRecord record = createRecord(schema, payload);
+
+            Assert.assertSame("MongoDB " + event[0] + " event should pass through", record, transform.apply(record));
+        }
+
+        transform.close();
+    }
+
+    @Test
+    public void testEnvelopeStringBeforePreservesAfterConversion() {
+        VariableScaleDecimalToStringTransform<SinkRecord> transform = new VariableScaleDecimalToStringTransform<>();
+        transform.configure(new HashMap<>());
+
+        Schema rowSchema = buildOptionalRowSchema();
+        Schema schema = buildEnvelopeSchema(Schema.OPTIONAL_STRING_SCHEMA, rowSchema);
+        String before = "{\"_id\":1}";
+        Struct payload = new Struct(schema)
+                .put("op", "u")
+                .put(BEFORE_FIELD, before)
+                .put(AFTER_FIELD, rowStruct(rowSchema, 1, "test", new BigDecimal("1235.00")))
+                .put("source", new Struct(sourceSchema).put("lsn", 1));
+
+        SinkRecord result = transform.apply(createRecord(schema, payload));
+        Struct resultValue = (Struct) result.value();
+        Assert.assertSame(Schema.OPTIONAL_STRING_SCHEMA, result.valueSchema().field(BEFORE_FIELD).schema());
+        Assert.assertEquals(before, resultValue.get(BEFORE_FIELD));
+        Struct after = (Struct) resultValue.get(AFTER_FIELD);
+        Assert.assertEquals("1235.00", after.get(FIELD_NAME));
+        Assert.assertEquals(Schema.Type.STRING, after.schema().field(FIELD_NAME).schema().type());
+
+        transform.close();
+    }
+
+    @Test
+    public void testEnvelopeStringAfterPreservesBeforeConversion() {
+        VariableScaleDecimalToStringTransform<SinkRecord> transform = new VariableScaleDecimalToStringTransform<>();
+        transform.configure(new HashMap<>());
+
+        Schema rowSchema = buildOptionalRowSchema();
+        Schema schema = buildEnvelopeSchema(rowSchema, Schema.OPTIONAL_STRING_SCHEMA);
+        String after = "{\"_id\":1}";
+        Struct payload = new Struct(schema)
+                .put("op", "u")
+                .put(BEFORE_FIELD, rowStruct(rowSchema, 1, "test", new BigDecimal("-987.654321")))
+                .put(AFTER_FIELD, after)
+                .put("source", new Struct(sourceSchema).put("lsn", 1));
+
+        SinkRecord result = transform.apply(createRecord(schema, payload));
+        Struct resultValue = (Struct) result.value();
+        Assert.assertSame(Schema.OPTIONAL_STRING_SCHEMA, result.valueSchema().field(AFTER_FIELD).schema());
+        Assert.assertEquals(after, resultValue.get(AFTER_FIELD));
+        Struct before = (Struct) resultValue.get(BEFORE_FIELD);
+        Assert.assertEquals("-987.654321", before.get(FIELD_NAME));
+        Assert.assertEquals(Schema.Type.STRING, before.schema().field(FIELD_NAME).schema().type());
+
+        transform.close();
+    }
+
     private static final String BEFORE_FIELD = "before";
     private static final String AFTER_FIELD = "after";
 }

@@ -226,6 +226,10 @@ public class VariableScaleDecimalToStringTransform<R extends ConnectRecord<R>> i
     }
 
     private boolean hasTargetFields(Schema schema) {
+        // MongoDB envelopes can carry before/after as JSON strings rather than row structs.
+        if (schema.type() != Schema.Type.STRUCT) {
+            return false;
+        }
         for (Field field : schema.fields()) {
             if (shouldConvertField(field)) {
                 return true;
