@@ -25,12 +25,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.starrocks.connector.kafka.StarRocksSinkTask;
 import org.apache.kafka.connect.data.SchemaAndValue;
+import org.apache.kafka.connect.errors.DataException;
 import org.apache.log4j.PropertyConfigurator;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class JsonConverterTest {
@@ -50,6 +54,31 @@ public class JsonConverterTest {
         byte[] jsonBytes = jsonSerializer.serialize("", jsonNodeSource);
         SchemaAndValue schemaAndValue = jsonConverter.toConnectData("", jsonBytes);
         return schemaAndValue;
+    }
+
+    @Test
+    public void testConvertSchemalessValues() {
+        JsonConverter jsonConverter = StarRocksSinkTask.createJsonConverter();
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("long", 1L);
+        value.put("int", 2);
+        value.put("double", 1.5);
+        value.put("bool", true);
+        value.put("string", "s");
+        value.put("list", Arrays.asList(1, 2));
+        value.put("map", Collections.singletonMap("k", "v"));
+        String expected = "{\"long\":1,\"int\":2,\"double\":1.5,\"bool\":true,\"string\":\"s\",\"list\":[1,2]," +
+                "\"map\":{\"k\":\"v\"}}";
+        // The second conversion looks the schema types up in the cache.
+        for (int i = 0; i < 2; i++) {
+            Assert.assertEquals(expected, jsonConverter.convertToJson(null, value).toString());
+        }
+        try {
+            jsonConverter.convertToJson(null, new Object());
+            Assert.fail("A value without a schema type should fail");
+        } catch (DataException e) {
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains("does not have corresponding schema type"));
+        }
     }
 
     @Test

@@ -103,7 +103,22 @@ public class StarRocksSinkConnector extends SinkConnector {
                 }
             }
         }
+        for (Map.Entry<String, String> error : MergeCommitOptions.validate(connectorConfigs).entrySet()) {
+            addErrorMessage(result, error.getKey(), error.getValue());
+        }
         return result;
+    }
+
+    private static void addErrorMessage(Config result, String name, String message) {
+        for (ConfigValue v : result.configValues()) {
+            if (v.name().equals(name)) {
+                v.addErrorMessage(message);
+                return;
+            }
+        }
+        ConfigValue value = new ConfigValue(name);
+        value.addErrorMessage(message);
+        result.configValues().add(value);
     }
 
     /** @return connector version */

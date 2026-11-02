@@ -129,6 +129,21 @@ public class JsonConverter implements Converter, HeaderConverter {
 
     private static final JsonNodeFactory JSON_NODE_FACTORY = JsonNodeFactory.withExactBigDecimals(true);
 
+    // ConnectSchema.schemaType locks a map shared by the whole JVM on every call, so the tasks of a worker wait
+    // for each other when they convert schemaless values field by field. Remember its answers without a lock.
+    private static final Map<Class<?>, Schema.Type> SCHEMA_TYPES = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static Schema.Type schemaType(Class<?> klass) {
+        Schema.Type type = SCHEMA_TYPES.get(klass);
+        if (type == null) {
+            type = ConnectSchema.schemaType(klass);
+            if (type != null) {
+                SCHEMA_TYPES.put(klass, type);
+            }
+        }
+        return type;
+    }
+
     static {
         LOGICAL_CONVERTERS.put(Decimal.LOGICAL_NAME, new LogicalTypeConverter() {
             @Override
@@ -569,7 +584,7 @@ public class JsonConverter implements Converter, HeaderConverter {
         try {
             final Schema.Type schemaType;
             if (schema == null) {
-                schemaType = ConnectSchema.schemaType(value.getClass());
+                schemaType = schemaType(value.getClass());
                 if (schemaType == null)
                     throw new DataException("Java class " + value.getClass() + " does not have corresponding schema type.");
             } else {

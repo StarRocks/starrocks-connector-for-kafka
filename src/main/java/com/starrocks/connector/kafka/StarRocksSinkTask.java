@@ -80,11 +80,14 @@ public class StarRocksSinkTask extends SinkTask  {
     private long maxRetryTimes;
     private long retryCount = 0;
     private Throwable sdkException;
+    // The first write that put() could not hand to the SDK since the last preCommit.
+    private Exception writeFailure;
 
     private long buffMaxbytes;
     private long bufferFlushInterval;
     private long currentBufferBytes = 0;
     private long lastFlushTime = 0;
+    private boolean mergeCommitEnabled;
 
     private StreamLoadManagerV2 buildLoadManager(StreamLoadProperties loadProperties) {
         StreamLoadManagerV2 manager = new StreamLoadManagerV2(loadProperties, true);
@@ -105,10 +108,14 @@ public class StarRocksSinkTask extends SinkTask  {
     }
 
     // Stream load thread count
-    // An HTTP thread pool is used for communication between the SDK and SR. 
+    // An HTTP thread pool is used for communication between the SDK and SR.
     // This configuration item is used to set the number of threads in the thread pool.
     private int getIoThreadCount() {
-        return 2;
+        return StarRocksSinkConnectorConfig.getInt(props, StarRocksSinkConnectorConfig.SINK_IO_THREAD_COUNT, 2);
+    }
+
+    private int getPublishTimeoutMs() {
+        return StarRocksSinkConnectorConfig.getInt(props, StarRocksSinkConnectorConfig.SINK_PUBLISH_TIMEOUT_MS, -1);
     }
 
     private long getScanFrequency() {
@@ -120,13 +127,18 @@ public class StarRocksSinkTask extends SinkTask  {
     }
 
     private void parseSinkStreamLoadProperties() {
-        props.keySet().stream()
-                .filter(key -> key.startsWith(StarRocksSinkConnectorConfig.SINK_PROPERTIES_PREFIX))
-                .forEach(key -> {
-                    final String value = props.get(key);
-                    final String subKey = key.substring((StarRocksSinkConnectorConfig.SINK_PROPERTIES_PREFIX).length()).toLowerCase();
-                    streamLoadProps.put(subKey, value);
-                });
+        streamLoadProps.putAll(StarRocksSinkConnectorConfig.getStreamLoadProperties(props));
+    }
+
+    // Visible for testing
+    StreamLoadProperties buildLoadProperties(Map<String, String> props) {
+        this.props = props;
+        return buildLoadProperties();
+    }
+
+    // Visible for testing
+    boolean isMergeCommitEnabled() {
+        return mergeCommitEnabled;
     }
 
     private StreamLoadProperties buildLoadProperties() {
@@ -150,6 +162,11 @@ public class StarRocksSinkTask extends SinkTask  {
             props.put(StarRocksSinkConnectorConfig.SINK_FORMAT, "json");
         }
         parseSinkStreamLoadProperties();
+        MergeCommitOptions.check(props);
+        mergeCommitEnabled = MergeCommitOptions.isEnabled(streamLoadProps);
+        if (mergeCommitEnabled) {
+            MergeCommitOptions.addDefaultStreamLoadProperties(streamLoadProps, sinkType == SinkType.JSON);
+        }
         LOG.info("Starrocks sink type is {}, stream load properties: {}", sinkType, streamLoadProps);
         // The Stream SDK must force the table name, which we set to _sr_default_table.
         // _sr_default_table will not be used.
@@ -157,7 +174,7 @@ public class StarRocksSinkTask extends SinkTask  {
                 .database(database)
                 .table("_sr_default_table")
                 .streamLoadDataFormat(dataFormat)
-                .chunkLimit(getChunkLimit())
+                .chunkLimit(mergeCommitEnabled ? MergeCommitOptions.getChunkSize(props) : getChunkLimit())
                 .addCommonProperties(streamLoadProps);
         String buffMaxbytesStr = props.getOrDefault(StarRocksSinkConnectorConfig.BUFFERFLUSH_MAXBYTES, "67108864");
         buffMaxbytes = Long.parseLong(buffMaxbytesStr);
@@ -180,7 +197,13 @@ public class StarRocksSinkTask extends SinkTask  {
                 .password(password)
                 .expectDelayTime(bufferFlushInterval)
                 .addHeaders(streamLoadProps)
-                .enableTransaction();
+                .setPublishTimeoutMs(getPublishTimeoutMs());
+        if (mergeCommitEnabled) {
+            // StreamLoadManagerV2 loads with merge commit when the headers enable it.
+            MergeCommitOptions.configure(props, builder);
+        } else {
+            builder.enableTransaction();
+        }
         return builder.build();
     }
 
@@ -203,6 +226,18 @@ public class StarRocksSinkTask extends SinkTask  {
         LOG.info("Starrocks sink task starting. version is " + Util.VERSION);
         this.props = props;
         loadProperties = buildLoadProperties();
+        if (mergeCommitEnabled) {
+            MergeCommitSharedServices.check(loadProperties);
+            LOG.info("Starrocks sink task loads with merge commit, interval: {} ms, parallel: {}, async: {}, " +
+                            "max concurrent requests: {}, chunk size: {}, flush interval: {} ms, " +
+                            "backend direct connection: {}",
+                    streamLoadProps.get(MergeCommitOptions.MERGE_COMMIT_INTERVAL_MS),
+                    streamLoadProps.get(MergeCommitOptions.MERGE_COMMIT_PARALLEL),
+                    streamLoadProps.get(MergeCommitOptions.MERGE_COMMIT_ASYNC),
+                    loadProperties.getMaxConcurrentRequests(),
+                    loadProperties.getDefaultTableProperties().getChunkLimit(),
+                    bufferFlushInterval, loadProperties.isBackendDirectConnection());
+        }
         loadManager = buildLoadManager(loadProperties);
         topic2Table = getTopicToTableMap(props);
         jsonConverter = createJsonConverter();
@@ -326,6 +361,11 @@ public class StarRocksSinkTask extends SinkTask  {
         }
 
         if (occurException && e != null) {
+            // The SDK may not have recorded the failure, for example when the write failed before the SDK registered
+            // the table, so keep it for preCommit, which fails the commit and makes Kafka Connect replay the records.
+            if (writeFailure == null) {
+                writeFailure = e;
+            }
             LOG.info("Starrocks Put occurs exception, Err {} currentBufferBytes {} recordRange [{}:{}-{}:{}] cost {}ms",
                     e.getMessage(), currentBufferBytes, 
                     firstRecord == null ? null : firstRecord.kafkaPartition(),
@@ -345,24 +385,28 @@ public class StarRocksSinkTask extends SinkTask  {
     @Override
     public Map<TopicPartition, OffsetAndMetadata> preCommit(Map<TopicPartition, OffsetAndMetadata> offsets) {
         long start = System.currentTimeMillis();
+        // A write that put() could not hand to the SDK fails the commit like a failed flush.
+        Throwable flushException = writeFailure;
+        writeFailure = null;
         // return previous offset when buffer size and flush interval are not reached
-        if (currentBufferBytes < buffMaxbytes && System.currentTimeMillis() - lastFlushTime < bufferFlushInterval) {
+        if (flushException == null && currentBufferBytes < buffMaxbytes
+                && System.currentTimeMillis() - lastFlushTime < bufferFlushInterval) {
             LOG.info("Starrocks skip preCommit currentBufferBytes {} less than buffMaxbytes {}"
                     + " or SinceLastFlushTime {} less than bufferFlushInterval {}",
                     currentBufferBytes, buffMaxbytes, System.currentTimeMillis() - lastFlushTime, bufferFlushInterval);
             return Collections.emptyMap();
         }
-        Throwable flushException = null;
-        try {
-            LOG.info("Starrocks preCommit flush currentBufferBytes {} and SinceLastFlushTime {}",
-                    currentBufferBytes, System.currentTimeMillis() - lastFlushTime);
-            loadManager.flush();
-        } catch (Exception e) {
-            flushException = e;
-        } finally {
-            lastFlushTime = System.currentTimeMillis();
-            currentBufferBytes = 0;
+        if (flushException == null) {
+            try {
+                LOG.info("Starrocks preCommit flush currentBufferBytes {} and SinceLastFlushTime {}",
+                        currentBufferBytes, System.currentTimeMillis() - lastFlushTime);
+                loadManager.flush();
+            } catch (Exception e) {
+                flushException = e;
+            }
         }
+        lastFlushTime = System.currentTimeMillis();
+        currentBufferBytes = 0;
         if (flushException == null) {
             flushException = loadManager.getException();
         }
@@ -375,10 +419,12 @@ public class StarRocksSinkTask extends SinkTask  {
                 loadManager.close();
             }
             loadManager = buildLoadManager(loadProperties);
+            // Log and keep the cause: with merge commit, the reason of a failed load, such as a data quality
+            // error and its tracking url, is only in the cause of the exception.
             LOG.warn("Starrocks preCommit flush fail err {} retry times {} cost {}ms",
-                    flushException.getMessage(), retryCount, System.currentTimeMillis() - start);
+                    flushException.getMessage(), retryCount, System.currentTimeMillis() - start, flushException);
             //  Each time the SDK is checked for an exception, if an exception occurs, it is thrown, and the framework replays the data from the offset of the commit.
-            throw new RuntimeException(flushException.getMessage());
+            throw new RuntimeException(flushException.getMessage(), flushException);
         } else {
             retryCount = 0;
             sdkException = null;
